@@ -1,13 +1,12 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,18 +17,23 @@
 
 package org.apache.arrow.vector.ipc;
 
+import static org.apache.arrow.vector.TestUtils.newVarCharVector;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 
-import com.google.common.collect.ImmutableList;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.util.Collections2;
 import org.apache.arrow.vector.DateMilliVector;
 import org.apache.arrow.vector.DecimalVector;
+import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.TimeMilliVector;
 import org.apache.arrow.vector.VarBinaryVector;
@@ -70,10 +74,8 @@ import org.slf4j.LoggerFactory;
 
 import io.netty.buffer.ArrowBuf;
 
-import static org.apache.arrow.vector.TestUtils.newVarCharVector;
-
 /**
- * Helps testing the file formats
+ * Helps testing the file formats.
  */
 public class BaseFileTest {
   private static final Logger LOGGER = LoggerFactory.getLogger(BaseFileTest.class);
@@ -232,7 +234,9 @@ public class BaseFileTest {
     }
   }
 
-  protected VectorSchemaRoot writeFlatDictionaryData(BufferAllocator bufferAllocator, DictionaryProvider.MapDictionaryProvider provider) {
+  protected VectorSchemaRoot writeFlatDictionaryData(
+      BufferAllocator bufferAllocator,
+      DictionaryProvider.MapDictionaryProvider provider) {
 
     // Define dictionaries and add to provider
     VarCharVector dictionary1Vector = newVarCharVector("D1", bufferAllocator);
@@ -289,8 +293,9 @@ public class BaseFileTest {
     FieldVector encodedVector2 = (FieldVector) DictionaryEncoder.encode(vector2, dictionary2);
     vector2.close();  // Done with this vector after encoding
 
-    List<Field> fields = ImmutableList.of(encodedVector1A.getField(), encodedVector1B.getField(), encodedVector2.getField());
-    List<FieldVector> vectors = ImmutableList.of(encodedVector1A, encodedVector1B, encodedVector2);
+    List<Field> fields = Arrays.asList(encodedVector1A.getField(), encodedVector1B.getField(),
+        encodedVector2.getField());
+    List<FieldVector> vectors = Collections2.asImmutableList(encodedVector1A, encodedVector1B, encodedVector2);
 
     return new VectorSchemaRoot(fields, vectors, encodedVector1A.getValueCount());
   }
@@ -359,7 +364,9 @@ public class BaseFileTest {
     Assert.assertEquals(new Text("large"), dictionaryVector.getObject(2));
   }
 
-  protected VectorSchemaRoot writeNestedDictionaryData(BufferAllocator bufferAllocator, DictionaryProvider.MapDictionaryProvider provider) {
+  protected VectorSchemaRoot writeNestedDictionaryData(
+      BufferAllocator bufferAllocator,
+      DictionaryProvider.MapDictionaryProvider provider) {
 
     // Define the dictionary and add to the provider
     VarCharVector dictionaryVector = newVarCharVector("D2", bufferAllocator);
@@ -389,8 +396,8 @@ public class BaseFileTest {
     listWriter.endList();
     listWriter.setValueCount(3);
 
-    List<Field> fields = ImmutableList.of(listVector.getField());
-    List<FieldVector> vectors = ImmutableList.<FieldVector>of(listVector);
+    List<Field> fields = Collections2.asImmutableList(listVector.getField());
+    List<FieldVector> vectors = Collections2.asImmutableList(listVector);
     return new VectorSchemaRoot(fields, vectors, 3);
   }
 
@@ -438,8 +445,9 @@ public class BaseFileTest {
     decimalVector2.setValueCount(count);
     decimalVector3.setValueCount(count);
 
-    List<Field> fields = ImmutableList.of(decimalVector1.getField(), decimalVector2.getField(), decimalVector3.getField());
-    List<FieldVector> vectors = ImmutableList.<FieldVector>of(decimalVector1, decimalVector2, decimalVector3);
+    List<Field> fields = Collections2.asImmutableList(decimalVector1.getField(), decimalVector2.getField(),
+        decimalVector3.getField());
+    List<FieldVector> vectors = Collections2.asImmutableList(decimalVector1, decimalVector2, decimalVector3);
     return new VectorSchemaRoot(fields, vectors, count);
   }
 
@@ -490,6 +498,8 @@ public class BaseFileTest {
           unionReader.reader("timestamp").read(h);
           Assert.assertEquals(i, h.value);
           break;
+        default:
+          assert false : "Unexpected value in switch statement: " + i;
       }
     }
   }
@@ -531,6 +541,8 @@ public class BaseFileTest {
           structWriter.timeStampMilli("timestamp").writeTimeStampMilli(i);
           structWriter.end();
           break;
+        default:
+          assert false : "Unexpected value in switch statement: " + i;
       }
     }
     writer.setValueCount(count);
@@ -583,5 +595,45 @@ public class BaseFileTest {
     // VarBinaryVector lastSet should be the index of last value
     VarBinaryVector binaryVector = (VarBinaryVector) listVector.getChildrenFromFields().get(0);
     Assert.assertEquals(binaryVector.getLastSet(), numVarBinaryValues - 1);
+  }
+
+  protected void writeBatchData(ArrowWriter writer, IntVector vector, VectorSchemaRoot root) throws IOException {
+    writer.start();
+
+    vector.setNull(0);
+    vector.setSafe(1, 1);
+    vector.setSafe(2, 2);
+    vector.setNull(3);
+    vector.setSafe(4, 1);
+    vector.setValueCount(5);
+    root.setRowCount(5);
+    writer.writeBatch();
+
+    vector.setNull(0);
+    vector.setSafe(1, 1);
+    vector.setSafe(2, 2);
+    vector.setValueCount(3);
+    root.setRowCount(3);
+    writer.writeBatch();
+
+    writer.end();
+  }
+
+  protected void validateBatchData(ArrowReader reader, IntVector vector) throws IOException {
+    reader.loadNextBatch();
+
+    assertEquals(vector.getValueCount(), 5);
+    assertTrue(vector.isNull(0));
+    assertEquals(vector.get(1), 1);
+    assertEquals(vector.get(2), 2);
+    assertTrue(vector.isNull(3));
+    assertEquals(vector.get(4), 1);
+
+    reader.loadNextBatch();
+
+    assertEquals(vector.getValueCount(), 3);
+    assertTrue(vector.isNull(0));
+    assertEquals(vector.get(1), 1);
+    assertEquals(vector.get(2), 2);
   }
 }

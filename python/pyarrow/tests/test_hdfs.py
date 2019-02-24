@@ -15,21 +15,22 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from io import BytesIO
-from os.path import join as pjoin
 import os
 import pickle
+import pytest
 import random
 import unittest
+import pandas.util.testing as pdt
+
+from io import BytesIO
+from os.path import join as pjoin
 
 import numpy as np
-import pandas.util.testing as pdt
-import pytest
+import pyarrow as pa
+import pyarrow.tests.test_parquet as test_parquet
 
 from pyarrow.compat import guid
-import pyarrow as pa
 
-import pyarrow.tests.test_parquet as test_parquet
 
 # ----------------------------------------------------------------------
 # HDFS tests
@@ -215,7 +216,7 @@ class HdfsTestCases(object):
         self.hdfs.mkdir(dir_path)
 
         f = self.hdfs.open(f1_path, 'wb')
-        f.write('a' * 10)
+        f.write(b'a' * 10)
 
         contents = sorted(self.hdfs.ls(base_path, False))
         assert contents == [dir_path, f1_path]
@@ -296,7 +297,7 @@ class HdfsTestCases(object):
         expected = pa.concat_tables(test_data)
         return expected
 
-    @test_parquet.parquet
+    @pytest.mark.parquet
     def test_read_multiple_parquet_files(self):
 
         tmpdir = pjoin(self.tmp_path, 'multi-parquet-' + guid())
@@ -310,7 +311,7 @@ class HdfsTestCases(object):
                                .sort_values(by='index').reset_index(drop=True),
                                expected.to_pandas())
 
-    @test_parquet.parquet
+    @pytest.mark.parquet
     def test_read_multiple_parquet_files_with_uri(self):
         import pyarrow.parquet as pq
 
@@ -326,7 +327,7 @@ class HdfsTestCases(object):
                                .sort_values(by='index').reset_index(drop=True),
                                expected.to_pandas())
 
-    @test_parquet.parquet
+    @pytest.mark.parquet
     def test_read_write_parquet_files_with_uri(self):
         import pyarrow.parquet as pq
 
@@ -340,26 +341,26 @@ class HdfsTestCases(object):
         df['uint32'] = df['uint32'].astype(np.int64)
         table = pa.Table.from_pandas(df, preserve_index=False)
 
-        pq.write_table(table, path)
+        pq.write_table(table, path, filesystem=self.hdfs)
 
-        result = pq.read_table(path).to_pandas()
+        result = pq.read_table(path, filesystem=self.hdfs).to_pandas()
 
         pdt.assert_frame_equal(result, df)
 
-    @test_parquet.parquet
+    @pytest.mark.parquet
     def test_read_common_metadata_files(self):
         tmpdir = pjoin(self.tmp_path, 'common-metadata-' + guid())
         self.hdfs.mkdir(tmpdir)
         test_parquet._test_read_common_metadata_files(self.hdfs, tmpdir)
 
-    @test_parquet.parquet
+    @pytest.mark.parquet
     def test_write_to_dataset_with_partitions(self):
         tmpdir = pjoin(self.tmp_path, 'write-partitions-' + guid())
         self.hdfs.mkdir(tmpdir)
         test_parquet._test_write_to_dataset_with_partitions(
             tmpdir, filesystem=self.hdfs)
 
-    @test_parquet.parquet
+    @pytest.mark.parquet
     def test_write_to_dataset_no_partitions(self):
         tmpdir = pjoin(self.tmp_path, 'write-no_partitions-' + guid())
         self.hdfs.mkdir(tmpdir)
@@ -379,7 +380,7 @@ class TestLibHdfs(HdfsTestCases, unittest.TestCase):
     def test_orphaned_file(self):
         hdfs = hdfs_test_client()
         file_path = self._make_test_file(hdfs, 'orphaned_file_test', 'fname',
-                                         'foobarbaz')
+                                         b'foobarbaz')
 
         f = hdfs.open(file_path)
         hdfs = None
@@ -406,3 +407,30 @@ def _get_hdfs_uri(path):
     uri = "hdfs://{}:{}{}".format(host, port, path)
 
     return uri
+
+
+@pytest.mark.parquet
+@pytest.mark.fastparquet
+@pytest.mark.parametrize('client', ['libhdfs', 'libhdfs3'])
+def test_fastparquet_read_with_hdfs(client):
+    try:
+        import snappy  # noqa
+    except ImportError:
+        pytest.skip('fastparquet test requires snappy')
+
+    import pyarrow.parquet as pq
+    fastparquet = pytest.importorskip('fastparquet')
+
+    fs = hdfs_test_client(client)
+
+    df = pdt.makeDataFrame()
+    table = pa.Table.from_pandas(df)
+
+    path = '/tmp/testing.parquet'
+    with fs.open(path, 'wb') as f:
+        pq.write_table(table, f)
+
+    parquet_file = fastparquet.ParquetFile(path, open_with=fs.open)
+
+    result = parquet_file.to_pandas()
+    pdt.assert_frame_equal(result, df)

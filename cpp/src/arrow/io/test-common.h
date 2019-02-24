@@ -20,26 +20,76 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <fstream>  // IWYU pragma: keep
 #include <memory>
 #include <string>
 #include <vector>
 
-#if defined(__MINGW32__)  // MinGW
-// nothing
-#elif defined(_MSC_VER)  // Visual Studio
+#ifdef _WIN32
+#include <crtdbg.h>
 #include <io.h>
-#else  // POSIX / Linux
-// nothing
+#else
+#include <fcntl.h>
 #endif
 
 #include "arrow/buffer.h"
 #include "arrow/io/file.h"
 #include "arrow/io/memory.h"
 #include "arrow/memory_pool.h"
-#include "arrow/test-util.h"
+#include "arrow/testing/gtest_util.h"
 
 namespace arrow {
 namespace io {
+
+static inline void AssertFileContents(const std::string& path,
+                                      const std::string& contents) {
+  std::shared_ptr<ReadableFile> rf;
+  int64_t size;
+
+  ASSERT_OK(ReadableFile::Open(path, &rf));
+  ASSERT_OK(rf->GetSize(&size));
+  ASSERT_EQ(size, contents.size());
+
+  std::shared_ptr<Buffer> actual_data;
+  ASSERT_OK(rf->Read(size, &actual_data));
+  ASSERT_TRUE(actual_data->Equals(Buffer(contents)));
+}
+
+static inline bool FileExists(const std::string& path) {
+  return std::ifstream(path.c_str()).good();
+}
+
+#if defined(_WIN32)
+static inline void InvalidParamHandler(const wchar_t* expr, const wchar_t* func,
+                                       const wchar_t* source_file,
+                                       unsigned int source_line, uintptr_t reserved) {
+  wprintf(L"Invalid parameter in function '%s'. Source: '%s' line %d expression '%s'\n",
+          func, source_file, source_line, expr);
+}
+#endif
+
+static inline bool FileIsClosed(int fd) {
+#if defined(_WIN32)
+  // Disables default behavior on wrong params which causes the application to crash
+  // https://msdn.microsoft.com/en-us/library/ksazx244.aspx
+  _set_invalid_parameter_handler(InvalidParamHandler);
+
+  // Disables possible assertion alert box on invalid input arguments
+  _CrtSetReportMode(_CRT_ASSERT, 0);
+
+  int new_fd = _dup(fd);
+  if (new_fd == -1) {
+    return errno == EBADF;
+  }
+  _close(new_fd);
+  return false;
+#else
+  if (-1 != fcntl(fd, F_GETFD)) {
+    return false;
+  }
+  return errno == EBADF;
+#endif
+}
 
 static inline Status ZeroMemoryMap(MemoryMappedFile* file) {
   constexpr int64_t kBufferSize = 512;
@@ -63,7 +113,7 @@ class MemoryMapFixture {
  public:
   void TearDown() {
     for (auto path : tmp_files_) {
-      std::remove(path.c_str());
+      ARROW_UNUSED(std::remove(path.c_str()));
     }
   }
 

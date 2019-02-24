@@ -19,7 +19,7 @@
 # Build upon the scripts in https://github.com/matthew-brett/manylinux-builds
 # * Copyright (c) 2013-2016, Matt Terry and Matthew Brett (BSD 2-clause)
 
-PYTHON_VERSIONS="${PYTHON_VERSIONS:-2.7,16 2.7,32 3.4,16 3.5,16 3.6,16}"
+PYTHON_VERSIONS="${PYTHON_VERSIONS:-2.7,16 2.7,32 3.5,16 3.6,16, 3.7,16}"
 
 source /multibuild/manylinux_utils.sh
 
@@ -33,15 +33,22 @@ for PYTHON_TUPLE in ${PYTHON_VERSIONS}; do
     PATH="$PATH:$(cpython_path $PYTHON ${U_WIDTH})"
 
     echo "=== (${PYTHON}, ${U_WIDTH}) Installing build dependencies ==="
-    $PIP install "numpy==1.10.4"
-    $PIP install "cython==0.28.1"
-    $PIP install "pandas==0.20.3"
-    $PIP install "virtualenv==15.1.0"
+    $PIP install "numpy==1.14.5" "cython==0.29.3" "virtualenv==16.3.0"
+    # Pandas requires numpy and cython
+    $PIP install "pandas==0.24.0"
+
+    # TensorFlow is not supported for Python 2.7 with unicode width 16 or with Python 3.7
+    if [ $PYTHON != "2.7" ] || [ $U_WIDTH = "32" ]; then
+      if [ $PYTHON != "3.7" ]; then
+        $PIP install "tensorflow==1.11.0" "Keras-Preprocessing==1.0.5"
+      fi
+    fi
+
 
     echo "=== (${PYTHON}, ${U_WIDTH}) Preparing virtualenv for tests ==="
     "$(cpython_path $PYTHON ${U_WIDTH})/bin/virtualenv" -p ${PYTHON_INTERPRETER} --no-download /venv-test-${PYTHON}-${U_WIDTH}
     source /venv-test-${PYTHON}-${U_WIDTH}/bin/activate
-    pip install pytest 'numpy==1.14.0' 'pandas==0.20.3'
+    pip install pytest hypothesis 'numpy==1.14.5' 'pandas==0.24.0'
     deactivate
 done
 
@@ -49,8 +56,9 @@ done
 find /venv-test-*/lib/*/site-packages/pandas -name '*.so' -exec strip '{}' ';'
 find /venv-test-*/lib/*/site-packages/numpy -name '*.so' -exec strip '{}' ';'
 find /opt/_internal/cpython-*/lib/*/site-packages/pandas -name '*.so' -exec strip '{}' ';'
-# Only Python 3.6 packages are stripable as they are built inside of the image 
-find /opt/_internal/cpython-3.6.4/lib/python3.6/site-packages/numpy -name '*.so' -exec strip '{}' ';'
+# Only Python 3.6+ packages are stripable as they are built inside of the image
+find /opt/_internal/cpython-3.6.*/lib/python3.6/site-packages/numpy -name '*.so' -exec strip '{}' ';'
+find /opt/_internal/cpython-3.7.*/lib/python3.7/site-packages/numpy -name '*.so' -exec strip '{}' ';'
 find /opt/_internal/*/lib/*/site-packages/Cython -name '*.so' -exec strip '{}' ';'
 
 # Remove pip cache again. It's useful during the virtualenv creation but we

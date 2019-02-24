@@ -17,10 +17,43 @@
 # specific language governing permissions and limitations
 # under the License.
 
-sudo apt-get install -y -q \
-    gdb ccache libboost-dev libboost-filesystem-dev \
-    libboost-system-dev libboost-regex-dev libjemalloc-dev
+set -e
+
+source $TRAVIS_BUILD_DIR/ci/travis_env_common.sh
+
+sudo apt-get install -y -qq \
+    gdb binutils ccache libboost-dev libboost-filesystem-dev \
+    libboost-system-dev libboost-regex-dev
+
+if [ "$CXX" == "g++-4.9" ]; then
+    sudo apt-get install -y -qq g++-4.9
+fi
 
 if [ "$ARROW_TRAVIS_VALGRIND" == "1" ]; then
-    sudo apt-get install -y -q valgrind
+    sudo apt-get install -y -qq valgrind
+fi
+
+if [ "$ARROW_TRAVIS_COVERAGE" == "1" ]; then
+    sudo apt-get install -y -qq lcov
+fi
+
+set -x
+if [ "$ARROW_TRAVIS_GANDIVA" == "1" ]; then
+    sudo apt-get install -y -qq llvm-$ARROW_LLVM_MAJOR_VERSION-dev
+fi
+
+set -x
+if [ "$DISTRO_CODENAME" != "trusty" ]; then
+    sudo apt-get install -y -qq maven
+
+    # Remove Travis-specific versions of Java
+    sudo rm -rf /usr/local/lib/jvm*
+    sudo rm -rf /usr/local/maven*
+    hash -r
+    unset JAVA_HOME
+
+    which java
+    which mvn
+    java -version
+    mvn -v
 fi

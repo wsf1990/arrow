@@ -1,13 +1,12 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,6 +20,7 @@ package org.apache.arrow.vector.ipc;
 import java.io.IOException;
 import java.nio.channels.WritableByteChannel;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -40,27 +40,25 @@ import org.apache.arrow.vector.util.DictionaryUtility;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.collect.ImmutableList;
-
+/**
+ * Abstract base class for implementing Arrow writers for IPC over a WriteChannel.
+ */
 public abstract class ArrowWriter implements AutoCloseable {
 
-  private static final Logger LOGGER = LoggerFactory.getLogger(ArrowWriter.class);
+  protected static final Logger LOGGER = LoggerFactory.getLogger(ArrowWriter.class);
 
   // schema with fields in message format, not memory format
-  private final Schema schema;
-  private final WriteChannel out;
+  protected final Schema schema;
+  protected final WriteChannel out;
 
   private final VectorUnloader unloader;
   private final List<ArrowDictionaryBatch> dictionaries;
-
-  private final List<ArrowBlock> dictionaryBlocks = new ArrayList<>();
-  private final List<ArrowBlock> recordBlocks = new ArrayList<>();
 
   private boolean started = false;
   private boolean ended = false;
 
   /**
-   * Note: fields are not closed when the writer is closed
+   * Note: fields are not closed when the writer is closed.
    *
    * @param root     the vectors to write to the output
    * @param provider where to find the dictionaries
@@ -84,7 +82,10 @@ public abstract class ArrowWriter implements AutoCloseable {
       Dictionary dictionary = provider.lookup(id);
       FieldVector vector = dictionary.getVector();
       int count = vector.getValueCount();
-      VectorSchemaRoot dictRoot = new VectorSchemaRoot(ImmutableList.of(vector.getField()), ImmutableList.of(vector), count);
+      VectorSchemaRoot dictRoot = new VectorSchemaRoot(
+          Collections.singletonList(vector.getField()),
+          Collections.singletonList(vector),
+          count);
       VectorUnloader unloader = new VectorUnloader(dictRoot);
       ArrowRecordBatch batch = unloader.getRecordBatch();
       this.dictionaries.add(new ArrowDictionaryBatch(id, batch));
@@ -104,11 +105,18 @@ public abstract class ArrowWriter implements AutoCloseable {
     }
   }
 
-  protected void writeRecordBatch(ArrowRecordBatch batch) throws IOException {
+  protected ArrowBlock writeDictionaryBatch(ArrowDictionaryBatch batch) throws IOException {
     ArrowBlock block = MessageSerializer.serialize(out, batch);
-    LOGGER.debug(String.format("RecordBatch at %d, metadata: %d, body: %d",
-        block.getOffset(), block.getMetadataLength(), block.getBodyLength()));
-    recordBlocks.add(block);
+    LOGGER.debug("DictionaryRecordBatch at {}, metadata: {}, body: {}",
+        block.getOffset(), block.getMetadataLength(), block.getBodyLength());
+    return block;
+  }
+
+  protected ArrowBlock writeRecordBatch(ArrowRecordBatch batch) throws IOException {
+    ArrowBlock block = MessageSerializer.serialize(out, batch);
+    LOGGER.debug("RecordBatch at {}, metadata: {}, body: {}",
+        block.getOffset(), block.getMetadataLength(), block.getBodyLength());
+    return block;
   }
 
   public void end() throws IOException {
@@ -130,10 +138,7 @@ public abstract class ArrowWriter implements AutoCloseable {
       // write out any dictionaries
       for (ArrowDictionaryBatch batch : dictionaries) {
         try {
-          ArrowBlock block = MessageSerializer.serialize(out, batch);
-          LOGGER.debug(String.format("DictionaryRecordBatch at %d, metadata: %d, body: %d",
-              block.getOffset(), block.getMetadataLength(), block.getBodyLength()));
-          dictionaryBlocks.add(block);
+          writeDictionaryBatch(batch);
         } finally {
           batch.close();
         }
@@ -144,16 +149,15 @@ public abstract class ArrowWriter implements AutoCloseable {
   private void ensureEnded() throws IOException {
     if (!ended) {
       ended = true;
-      endInternal(out, schema, dictionaryBlocks, recordBlocks);
+      endInternal(out);
     }
   }
 
-  protected abstract void startInternal(WriteChannel out) throws IOException;
+  protected void startInternal(WriteChannel out) throws IOException {
+  }
 
-  protected abstract void endInternal(WriteChannel out,
-                                      Schema schema,
-                                      List<ArrowBlock> dictionaries,
-                                      List<ArrowBlock> records) throws IOException;
+  protected void endInternal(WriteChannel out) throws IOException {
+  }
 
   @Override
   public void close() {

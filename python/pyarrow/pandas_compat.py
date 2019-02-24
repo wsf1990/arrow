@@ -28,12 +28,12 @@ import pandas as pd
 import six
 
 import pyarrow as pa
-from pyarrow.compat import builtin_pickle, PY2, zip_longest  # noqa
+from pyarrow.compat import builtin_pickle, DatetimeTZDtype, PY2, zip_longest  # noqa
 
 
 def infer_dtype(column):
     try:
-        return pd.api.types.infer_dtype(column)
+        return pd.api.types.infer_dtype(column, skipna=False)
     except AttributeError:
         return pd.lib.infer_dtype(column)
 
@@ -111,6 +111,9 @@ def get_logical_type_from_numpy(pandas_collection):
     except KeyError:
         if hasattr(pandas_collection.dtype, 'tz'):
             return 'datetimetz'
+        # See https://github.com/pandas-dev/pandas/issues/24739
+        if str(pandas_collection.dtype) == 'datetime64[ns]':
+            return 'datetime64[ns]'
         result = infer_dtype(pandas_collection)
 
         if result == 'string':
@@ -316,7 +319,19 @@ def _index_level_name(index, i, column_names):
         return '__index_level_{:d}__'.format(i)
 
 
-def dataframe_to_arrays(df, schema, preserve_index, nthreads=1):
+def _get_columns_to_convert(df, schema, preserve_index, columns):
+    if schema is not None and columns is not None:
+        raise ValueError('Schema and columns arguments are mutually '
+                         'exclusive, pass only one of them')
+    elif schema is not None:
+        columns = schema.names
+    elif columns is not None:
+        # columns is only for filtering, the function must keep the column
+        # ordering of either the dataframe or the passed schema
+        columns = [c for c in df.columns if c in columns]
+    else:
+        columns = df.columns
+
     column_names = []
     index_columns = []
     index_column_names = []
@@ -334,7 +349,7 @@ def dataframe_to_arrays(df, schema, preserve_index, nthreads=1):
             'Duplicate column names found: {}'.format(list(df.columns))
         )
 
-    for name in df.columns:
+    for name in columns:
         col = df[name]
         name = _column_name_to_strings(name)
 
@@ -352,6 +367,44 @@ def dataframe_to_arrays(df, schema, preserve_index, nthreads=1):
         name = _index_level_name(column, i, column_names)
         index_column_names.append(name)
 
+    names = column_names + index_column_names
+
+    return (names, column_names, index_columns, index_column_names,
+            columns_to_convert, convert_types)
+
+
+def dataframe_to_types(df, preserve_index, columns=None):
+    names, column_names, index_columns, index_column_names, \
+        columns_to_convert, _ = _get_columns_to_convert(
+            df, None, preserve_index, columns
+        )
+
+    types = []
+    # If pandas knows type, skip conversion
+    for c in columns_to_convert:
+        values = c.values
+        if isinstance(values, pd.Categorical):
+            type_ = pa.array(c, from_pandas=True).type
+        else:
+            values, type_ = get_datetimetz_type(values, c.dtype, None)
+            type_ = pa.lib._ndarray_to_arrow_type(values, type_)
+            if type_ is None:
+                type_ = pa.array(c, from_pandas=True).type
+        types.append(type_)
+
+    metadata = construct_metadata(df, column_names, index_columns,
+                                  index_column_names, preserve_index, types)
+
+    return names, types, metadata
+
+
+def dataframe_to_arrays(df, schema, preserve_index, nthreads=1, columns=None,
+                        safe=True):
+    names, column_names, index_columns, index_column_names, \
+        columns_to_convert, convert_types = _get_columns_to_convert(
+            df, schema, preserve_index, columns
+        )
+
     # NOTE(wesm): If nthreads=None, then we use a heuristic to decide whether
     # using a thread pool is worth it. Currently the heuristic is whether the
     # nrows > 100 * ncols.
@@ -363,7 +416,14 @@ def dataframe_to_arrays(df, schema, preserve_index, nthreads=1):
             nthreads = 1
 
     def convert_column(col, ty):
-        return pa.array(col, from_pandas=True, type=ty)
+        try:
+            return pa.array(col, type=ty, from_pandas=True, safe=safe)
+        except (pa.ArrowInvalid,
+                pa.ArrowNotImplementedError,
+                pa.ArrowTypeError) as e:
+            e.args += ("Conversion failed for column {0!s} with type {1!s}"
+                       .format(col.name, col.dtype),)
+            raise e
 
     if nthreads == 1:
         arrays = [convert_column(c, t)
@@ -382,13 +442,11 @@ def dataframe_to_arrays(df, schema, preserve_index, nthreads=1):
         df, column_names, index_columns, index_column_names, preserve_index,
         types
     )
-    names = column_names + index_column_names
+
     return names, arrays, metadata
 
 
 def get_datetimetz_type(values, dtype, type_):
-    from pyarrow.compat import DatetimeTZDtype
-
     if values.dtype.type != np.datetime64:
         return values, type_
 
@@ -420,7 +478,8 @@ def dataframe_to_serialized_dict(frame):
 
         if isinstance(block, _int.DatetimeTZBlock):
             block_data['timezone'] = pa.lib.tzinfo_to_string(values.tz)
-            values = values.values
+            if hasattr(values, 'values'):
+                values = values.values
         elif isinstance(block, _int.CategoricalBlock):
             block_data.update(dictionary=values.categories,
                               ordered=values.ordered)
@@ -482,7 +541,6 @@ def _reconstruct_block(item):
 
 
 def _make_datetimetz(tz):
-    from pyarrow.compat import DatetimeTZDtype
     tz = pa.lib.string_to_tzinfo(tz)
     return DatetimeTZDtype('ns', tz=tz)
 
@@ -491,9 +549,8 @@ def _make_datetimetz(tz):
 # Converting pyarrow.Table efficiently to pandas.DataFrame
 
 
-def table_to_blockmanager(options, table, memory_pool, nthreads=1,
-                          categories=None):
-    from pyarrow.compat import DatetimeTZDtype
+def table_to_blockmanager(options, table, categories=None,
+                          ignore_metadata=False):
 
     index_columns = []
     columns = []
@@ -504,7 +561,8 @@ def table_to_blockmanager(options, table, memory_pool, nthreads=1,
     row_count = table.num_rows
     metadata = schema.metadata
 
-    has_pandas_metadata = metadata is not None and b'pandas' in metadata
+    has_pandas_metadata = (not ignore_metadata and metadata is not None
+                           and b'pandas' in metadata)
 
     if has_pandas_metadata:
         pandas_metadata = json.loads(metadata[b'pandas'].decode('utf8'))
@@ -566,7 +624,7 @@ def table_to_blockmanager(options, table, memory_pool, nthreads=1,
                 block_table.schema.get_field_index(raw_name)
             )
 
-    blocks = _table_to_blocks(options, block_table, nthreads, memory_pool,
+    blocks = _table_to_blocks(options, block_table, pa.default_memory_pool(),
                               categories)
 
     # Construct the row index
@@ -648,6 +706,7 @@ _pandas_logical_type_map = {
     'string': np.str_,
     'empty': np.object_,
     'mixed': np.object_,
+    'mixed-integer': np.object_
 }
 
 
@@ -668,6 +727,14 @@ def _pandas_type_to_numpy_type(pandas_type):
         return _pandas_logical_type_map[pandas_type]
     except KeyError:
         return np.dtype(pandas_type)
+
+
+def _get_multiindex_codes(mi):
+    # compat for pandas < 0.24 (MI labels renamed to codes).
+    if isinstance(mi, pd.MultiIndex):
+        return mi.codes if hasattr(mi, 'codes') else mi.labels
+    else:
+        return None
 
 
 def _reconstruct_columns_from_metadata(columns, column_indexes):
@@ -696,7 +763,7 @@ def _reconstruct_columns_from_metadata(columns, column_indexes):
     # Get levels and labels, and provide sane defaults if the index has a
     # single level to avoid if/else spaghetti.
     levels = getattr(columns, 'levels', None) or [columns]
-    labels = getattr(columns, 'labels', None) or [
+    labels = _get_multiindex_codes(columns) or [
         pd.RangeIndex(len(level)) for level in levels
     ]
 
@@ -723,15 +790,15 @@ def _reconstruct_columns_from_metadata(columns, column_indexes):
 
         new_levels.append(level)
 
-    return pd.MultiIndex(levels=new_levels, labels=labels, names=columns.names)
+    return pd.MultiIndex(new_levels, labels, names=columns.names)
 
 
-def _table_to_blocks(options, block_table, nthreads, memory_pool, categories):
+def _table_to_blocks(options, block_table, memory_pool, categories):
     # Part of table_to_blockmanager
 
     # Convert an arrow table to Block from the internal pandas API
-    result = pa.lib.table_to_blocks(options, block_table, nthreads,
-                                    memory_pool, categories)
+    result = pa.lib.table_to_blocks(options, block_table, memory_pool,
+                                    categories)
 
     # Defined above
     return [_reconstruct_block(item) for item in result]
@@ -740,7 +807,7 @@ def _table_to_blocks(options, block_table, nthreads, memory_pool, categories):
 def _flatten_single_level_multiindex(index):
     if isinstance(index, pd.MultiIndex) and index.nlevels == 1:
         levels, = index.levels
-        labels, = index.labels
+        labels, = _get_multiindex_codes(index)
 
         # Cheaply check that we do not somehow have duplicate column names
         if not index.is_unique:

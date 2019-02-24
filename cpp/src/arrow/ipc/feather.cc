@@ -33,15 +33,19 @@
 #include "arrow/ipc/feather-internal.h"
 #include "arrow/ipc/feather_generated.h"
 #include "arrow/ipc/util.h"  // IWYU pragma: keep
-#include "arrow/record_batch.h"
 #include "arrow/status.h"
-#include "arrow/table.h"
+#include "arrow/table.h"  // IWYU pragma: keep
 #include "arrow/type.h"
+#include "arrow/type_traits.h"
 #include "arrow/util/bit-util.h"
+#include "arrow/util/checked_cast.h"
 #include "arrow/util/logging.h"
 #include "arrow/visitor.h"
 
 namespace arrow {
+
+using internal::checked_cast;
+
 namespace ipc {
 namespace feather {
 
@@ -176,6 +180,7 @@ ColumnBuilder::ColumnBuilder(TableBuilder* parent, const std::string& name)
   fbb_ = &parent->fbb();
   name_ = name;
   type_ = ColumnType::PRIMITIVE;
+  meta_time_.unit = TimeUnit::SECOND;
 }
 
 flatbuffers::Offset<void> ColumnBuilder::CreateColumnMetadata() {
@@ -283,7 +288,7 @@ class TableReader::TableReaderImpl {
     }
 
     std::shared_ptr<Buffer> buffer;
-    RETURN_NOT_OK(source->Read(magic_size, &buffer));
+    RETURN_NOT_OK(source->ReadAt(0, magic_size, &buffer));
 
     if (memcmp(buffer->data(), kFeatherMagicBytes, magic_size)) {
       return Status::Invalid("Not a feather file");
@@ -440,6 +445,66 @@ class TableReader::TableReaderImpl {
     return Status::OK();
   }
 
+  Status Read(std::shared_ptr<Table>* out) {
+    std::vector<std::shared_ptr<Field>> fields;
+    std::vector<std::shared_ptr<Column>> columns;
+    for (int i = 0; i < num_columns(); ++i) {
+      std::shared_ptr<Column> column;
+      RETURN_NOT_OK(GetColumn(i, &column));
+      columns.push_back(column);
+      fields.push_back(column->field());
+    }
+    *out = Table::Make(schema(fields), columns);
+    return Status::OK();
+  }
+
+  Status Read(const std::vector<int>& indices, std::shared_ptr<Table>* out) {
+    std::vector<std::shared_ptr<Field>> fields;
+    std::vector<std::shared_ptr<Column>> columns;
+    for (int i = 0; i < num_columns(); ++i) {
+      bool found = false;
+      for (auto j : indices) {
+        if (i == j) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        continue;
+      }
+      std::shared_ptr<Column> column;
+      RETURN_NOT_OK(GetColumn(i, &column));
+      columns.push_back(column);
+      fields.push_back(column->field());
+    }
+    *out = Table::Make(schema(fields), columns);
+    return Status::OK();
+  }
+
+  Status Read(const std::vector<std::string>& names, std::shared_ptr<Table>* out) {
+    std::vector<std::shared_ptr<Field>> fields;
+    std::vector<std::shared_ptr<Column>> columns;
+    for (int i = 0; i < num_columns(); ++i) {
+      auto name = GetColumnName(i);
+      bool found = false;
+      for (auto& n : names) {
+        if (name == n) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        continue;
+      }
+      std::shared_ptr<Column> column;
+      RETURN_NOT_OK(GetColumn(i, &column));
+      columns.push_back(column);
+      fields.push_back(column->field());
+    }
+    *out = Table::Make(schema(fields), columns);
+    return Status::OK();
+  }
+
  private:
   std::shared_ptr<io::RandomAccessFile> source_;
   std::unique_ptr<TableMetadata> metadata_;
@@ -474,6 +539,17 @@ std::string TableReader::GetColumnName(int i) const { return impl_->GetColumnNam
 
 Status TableReader::GetColumn(int i, std::shared_ptr<Column>* out) {
   return impl_->GetColumn(i, out);
+}
+
+Status TableReader::Read(std::shared_ptr<Table>* out) { return impl_->Read(out); }
+
+Status TableReader::Read(const std::vector<int>& indices, std::shared_ptr<Table>* out) {
+  return impl_->Read(indices, out);
+}
+
+Status TableReader::Read(const std::vector<std::string>& names,
+                         std::shared_ptr<Table>* out) {
+  return impl_->Read(names, out);
 }
 
 // ----------------------------------------------------------------------
@@ -567,9 +643,7 @@ class TableWriter::TableWriterImpl : public ArrayVisitor {
 
   Status LoadArrayMetadata(const Array& values, ArrayMetadata* meta) {
     if (!(is_primitive(values.type_id()) || is_binary_like(values.type_id()))) {
-      std::stringstream ss;
-      ss << "Array is not primitive type: " << values.type()->ToString();
-      return Status::Invalid(ss.str());
+      return Status::Invalid("Array is not primitive type: ", values.type()->ToString());
     }
 
     meta->type = ToFlatbufferType(values.type_id());
@@ -611,7 +685,7 @@ class TableWriter::TableWriterImpl : public ArrayVisitor {
     const uint8_t* values_buffer = nullptr;
 
     if (is_binary_like(values.type_id())) {
-      const auto& bin_values = static_cast<const BinaryArray&>(values);
+      const auto& bin_values = checked_cast<const BinaryArray&>(values);
 
       int64_t offset_bytes = sizeof(int32_t) * (values.length() + 1);
 
@@ -632,8 +706,8 @@ class TableWriter::TableWriterImpl : public ArrayVisitor {
         values_buffer = bin_values.value_data()->data();
       }
     } else {
-      const auto& prim_values = static_cast<const PrimitiveArray&>(values);
-      const auto& fw_type = static_cast<const FixedWidthType&>(*values.type());
+      const auto& prim_values = checked_cast<const PrimitiveArray&>(values);
+      const auto& fw_type = checked_cast<const FixedWidthType&>(*values.type());
 
       values_bytes = BitUtil::BytesForBits(values.length() * fw_type.bit_width());
 
@@ -688,7 +762,7 @@ class TableWriter::TableWriterImpl : public ArrayVisitor {
 #undef VISIT_PRIMITIVE
 
   Status Visit(const DictionaryArray& values) override {
-    const auto& dict_type = static_cast<const DictionaryType&>(*values.type());
+    const auto& dict_type = checked_cast<const DictionaryType&>(*values.type());
 
     if (!is_integer(values.indices()->type_id())) {
       return Status::Invalid("Category values must be integers");
@@ -707,7 +781,7 @@ class TableWriter::TableWriterImpl : public ArrayVisitor {
 
   Status Visit(const TimestampArray& values) override {
     RETURN_NOT_OK(WritePrimitiveValues(values));
-    const auto& ts_type = static_cast<const TimestampType&>(*values.type());
+    const auto& ts_type = checked_cast<const TimestampType&>(*values.type());
     current_column_->SetTimestamp(ts_type.unit(), ts_type.timezone());
     return Status::OK();
   }
@@ -720,7 +794,7 @@ class TableWriter::TableWriterImpl : public ArrayVisitor {
 
   Status Visit(const Time32Array& values) override {
     RETURN_NOT_OK(WritePrimitiveValues(values));
-    auto unit = static_cast<const Time32Type&>(*values.type()).unit();
+    auto unit = checked_cast<const Time32Type&>(*values.type()).unit();
     current_column_->SetTime(unit);
     return Status::OK();
   }
@@ -733,6 +807,19 @@ class TableWriter::TableWriterImpl : public ArrayVisitor {
     current_column_ = metadata_.AddColumn(name);
     RETURN_NOT_OK(values.Accept(this));
     return current_column_->Finish();
+  }
+
+  Status Write(const Table& table) {
+    for (int i = 0; i < table.num_columns(); ++i) {
+      auto column = table.column(i);
+      current_column_ = metadata_.AddColumn(column->name());
+      auto chunked_array = column->data();
+      for (const auto chunk : chunked_array->chunks()) {
+        RETURN_NOT_OK(chunk->Accept(this));
+      }
+      RETURN_NOT_OK(current_column_->Finish());
+    }
+    return Status::OK();
   }
 
  private:
@@ -774,6 +861,8 @@ void TableWriter::SetNumRows(int64_t num_rows) { impl_->SetNumRows(num_rows); }
 Status TableWriter::Append(const std::string& name, const Array& values) {
   return impl_->Append(name, values);
 }
+
+Status TableWriter::Write(const Table& table) { return impl_->Write(table); }
 
 Status TableWriter::Finalize() { return impl_->Finalize(); }
 

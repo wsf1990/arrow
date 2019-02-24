@@ -1,14 +1,13 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- * <p>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,17 +17,19 @@
 
 package org.apache.arrow.vector.complex;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static org.apache.arrow.util.Preconditions.checkNotNull;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
-import com.google.common.collect.ObjectArrays;
-
-import io.netty.buffer.ArrowBuf;
 import org.apache.arrow.memory.BaseAllocator;
 import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.vector.*;
+import org.apache.arrow.vector.BaseValueVector;
+import org.apache.arrow.vector.BitVectorHelper;
+import org.apache.arrow.vector.BufferBacked;
+import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.complex.impl.NullableStructReaderImpl;
 import org.apache.arrow.vector.complex.impl.NullableStructWriter;
 import org.apache.arrow.vector.holders.ComplexHolder;
@@ -36,11 +37,13 @@ import org.apache.arrow.vector.ipc.message.ArrowFieldNode;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.ArrowType.Struct;
 import org.apache.arrow.vector.types.pojo.DictionaryEncoding;
-import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.util.CallBack;
 import org.apache.arrow.vector.util.OversizedAllocationException;
 import org.apache.arrow.vector.util.TransferPair;
+
+import io.netty.buffer.ArrowBuf;
 
 public class StructVector extends NonNullableStructVector implements FieldVector {
 
@@ -70,7 +73,8 @@ public class StructVector extends NonNullableStructVector implements FieldVector
   public StructVector(String name, BufferAllocator allocator, FieldType fieldType, CallBack callBack) {
     super(name, checkNotNull(allocator), fieldType, callBack);
     this.validityBuffer = allocator.getEmpty();
-    this.validityAllocationSizeInBytes = BitVectorHelper.getValidityBufferSize(BaseValueVector.INITIAL_VALUE_ALLOCATION);
+    this.validityAllocationSizeInBytes =
+      BitVectorHelper.getValidityBufferSize(BaseValueVector.INITIAL_VALUE_ALLOCATION);
   }
 
   @Override
@@ -130,7 +134,7 @@ public class StructVector extends NonNullableStructVector implements FieldVector
 
   @Override
   public TransferPair makeTransferPair(ValueVector to) {
-    return new NullableStructTransferPair(this, (StructVector) to, true);
+    return new NullableStructTransferPair(this, (StructVector) to, false);
   }
 
   @Override
@@ -245,7 +249,7 @@ public class StructVector extends NonNullableStructVector implements FieldVector
   }
 
   /**
-   * Get the current value capacity for the vector
+   * Get the current value capacity for the vector.
    * @return number of elements that vector can hold.
    */
   @Override
@@ -272,8 +276,10 @@ public class StructVector extends NonNullableStructVector implements FieldVector
     if (getBufferSize() == 0) {
       buffers = new ArrowBuf[0];
     } else {
-      buffers = ObjectArrays.concat(new ArrowBuf[]{validityBuffer}, super.getBuffers(false),
-              ArrowBuf.class);
+      List<ArrowBuf> list = new ArrayList<>();
+      list.add(validityBuffer);
+      list.addAll(Arrays.asList(super.getBuffers(false)));
+      buffers = list.toArray(new ArrowBuf[list.size()]);
     }
     if (clear) {
       for (ArrowBuf buffer : buffers) {
@@ -295,7 +301,7 @@ public class StructVector extends NonNullableStructVector implements FieldVector
   }
 
   /**
-   * Same as {@link #close()}
+   * Same as {@link #close()}.
    */
   @Override
   public void clear() {
@@ -304,7 +310,7 @@ public class StructVector extends NonNullableStructVector implements FieldVector
   }
 
   /**
-   * Reset this vector to empty, does not release buffers
+   * Reset this vector to empty, does not release buffers.
    */
   @Override
   public void reset() {
@@ -313,7 +319,7 @@ public class StructVector extends NonNullableStructVector implements FieldVector
   }
 
   /**
-   * Release the validity buffer
+   * Release the validity buffer.
    */
   private void clearValidityBuffer() {
     validityBuffer.release();
@@ -321,8 +327,8 @@ public class StructVector extends NonNullableStructVector implements FieldVector
   }
 
   /**
-   * Get the size (number of bytes) of underlying buffers used by this
-   * vector
+   * Get the size (number of bytes) of underlying buffers used by this vector.
+   *
    * @return size of underlying buffers.
    */
   @Override
@@ -336,6 +342,7 @@ public class StructVector extends NonNullableStructVector implements FieldVector
 
   /**
    * Get the potential buffer size for a particular number of records.
+   *
    * @param valueCount desired number of elements in the vector
    * @return estimated size of underlying buffers if the vector holds
    *         a given number of elements
@@ -345,8 +352,8 @@ public class StructVector extends NonNullableStructVector implements FieldVector
     if (valueCount == 0) {
       return 0;
     }
-    return super.getBufferSizeFor(valueCount)
-            + BitVectorHelper.getValidityBufferSize(valueCount);
+    return super.getBufferSizeFor(valueCount) +
+            BitVectorHelper.getValidityBufferSize(valueCount);
   }
 
   @Override
@@ -414,8 +421,8 @@ public class StructVector extends NonNullableStructVector implements FieldVector
     }
 
     final ArrowBuf newBuf = allocator.buffer((int) newAllocationSize);
-    newBuf.setZero(0, newBuf.capacity());
     newBuf.setBytes(0, validityBuffer, 0, currentBufferCapacity);
+    newBuf.setZero(currentBufferCapacity, newBuf.capacity() - currentBufferCapacity);
     validityBuffer.release(1);
     validityBuffer = newBuf;
     validityAllocationSizeInBytes = (int) newAllocationSize;
@@ -478,7 +485,7 @@ public class StructVector extends NonNullableStructVector implements FieldVector
     final int byteIndex = index >> 3;
     final byte b = validityBuffer.getByte(byteIndex);
     final int bitIndex = index & 7;
-    return Long.bitCount(b & (1L << bitIndex));
+    return (b >> bitIndex) & 0x01;
   }
 
   public void setIndexDefined(int index) {

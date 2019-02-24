@@ -16,10 +16,10 @@
 // under the License.
 
 // Use the ES5 UMD target as perf baseline
-// const { predicate, Table, read: readBatches } = require('../targets/es5/umd');
-// const { predicate, Table, read: readBatches } = require('../targets/es5/cjs');
-// const { predicate, Table, read: readBatches } = require('../targets/es2015/umd');
-const { predicate, Table, read: readBatches } = require('../targets/es2015/cjs');
+// const { predicate, Table, RecordBatchReader } = require('../targets/es5/umd');
+// const { predicate, Table, RecordBatchReader } = require('../targets/es5/cjs');
+// const { predicate, Table, RecordBatchReader } = require('../targets/es2015/umd');
+const { predicate, Table, RecordBatchReader } = require('../targets/es2015/cjs');
 const { col } = predicate;
 
 const Benchmark = require('benchmark');
@@ -44,10 +44,12 @@ for (let { name, buffers } of require('./table_config')) {
 for (let {name, buffers, countBys, counts} of require('./table_config')) {
     const table = Table.from(buffers);
 
+    const tableIterateSuiteName = `Table Iterate "${name}"`;
     const dfCountBySuiteName = `DataFrame Count By "${name}"`;
     const dfFilterCountSuiteName = `DataFrame Filter-Scan Count "${name}"`;
     const dfDirectCountSuiteName = `DataFrame Direct Count "${name}"`;
 
+    suites.push(createTestSuite(tableIterateSuiteName, createTableIterateTest(table)));
     suites.push(...countBys.map((countBy) => createTestSuite(dfCountBySuiteName, createDataFrameCountByTest(table, countBy))));
     suites.push(...counts.map(({ col, test, value }) => createTestSuite(dfFilterCountSuiteName, createDataFrameFilterCountTest(table, col, test, value))));
     suites.push(...counts.map(({ col, test, value }) => createTestSuite(dfDirectCountSuiteName, createDataFrameDirectCountTest(table, col, test, value))));
@@ -91,7 +93,7 @@ function createReadBatchesTest(name, buffers) {
     return {
         async: true,
         name: `readBatches\n`,
-        fn() { for (recordBatch of readBatches(buffers)) {} }
+        fn() { for (recordBatch of RecordBatchReader.from(buffers)) {} }
     };
 }
 
@@ -135,38 +137,49 @@ function createGetByIndexTest(vector, name) {
     };
 }
 
+function createTableIterateTest(table) {
+    let value;
+    return {
+        async: true,
+        name: `length: ${table.length}\n`,
+        fn() { for (value of table) {} }
+    };
+}
+
 function createDataFrameDirectCountTest(table, column, test, value) {
     let sum, colidx = table.schema.fields.findIndex((c)=>c.name === column);
 
-    if (test == 'gteq') {
-        op = function () {
+    if (test == 'gt') {
+        op = () => {
             sum = 0;
-            let batches = table.batches;
+            let batches = table.chunks;
             let numBatches = batches.length;
             for (let batchIndex = -1; ++batchIndex < numBatches;) {
                 // load batches
                 const batch = batches[batchIndex];
                 const vector = batch.getChildAt(colidx);
                 // yield all indices
-                for (let index = -1; ++index < batch.length;) {
+                for (let index = -1, length = batch.length; ++index < length;) {
                     sum += (vector.get(index) >= value);
                 }
             }
+            return sum;
         }
     } else if (test == 'eq') {
-        op = function() {
+        op = () => {
             sum = 0;
-            let batches = table.batches;
+            let batches = table.chunks;
             let numBatches = batches.length;
             for (let batchIndex = -1; ++batchIndex < numBatches;) {
                 // load batches
                 const batch = batches[batchIndex];
                 const vector = batch.getChildAt(colidx);
                 // yield all indices
-                for (let index = -1; ++index < batch.length;) {
+                for (let index = -1, length = batch.length; ++index < length;) {
                     sum += (vector.get(index) === value);
                 }
             }
+            return sum;
         }
     } else {
         throw new Error(`Unrecognized test "${test}"`);
@@ -195,8 +208,8 @@ function createDataFrameFilterCountTest(table, column, test, value) {
     let colidx = table.schema.fields.findIndex((c)=> c.name === column);
     let df;
 
-    if (test == 'gteq') {
-        df = table.filter(col(column).gteq(value));
+    if (test == 'gt') {
+        df = table.filter(col(column).gt(value));
     } else if (test == 'eq') {
         df = table.filter(col(column).eq(value));
     } else {

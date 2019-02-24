@@ -15,12 +15,19 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Plasma protocol specification
+include "common.fbs";
 
-enum MessageType:int {
+// Plasma protocol specification
+namespace plasma.flatbuf;
+
+enum MessageType:long {
+  // Message that gets send when a client hangs up.
+  PlasmaDisconnectClient = 0,
   // Create a new object.
-  PlasmaCreateRequest = 1,
+  PlasmaCreateRequest,
   PlasmaCreateReply,
+  PlasmaCreateAndSealRequest,
+  PlasmaCreateAndSealReply,
   PlasmaAbortRequest,
   PlasmaAbortReply,
   // Seal an object.
@@ -35,23 +42,18 @@ enum MessageType:int {
   // Delete an object.
   PlasmaDeleteRequest,
   PlasmaDeleteReply,
-  // Get status of an object.
-  PlasmaStatusRequest,
-  PlasmaStatusReply,
   // See if the store contains an object (will be deprecated).
   PlasmaContainsRequest,
   PlasmaContainsReply,
+  // List all objects in the store.
+  PlasmaListRequest,
+  PlasmaListReply,
   // Get information for a newly connecting client.
   PlasmaConnectRequest,
   PlasmaConnectReply,
   // Make room for new objects in the plasma store.
   PlasmaEvictRequest,
   PlasmaEvictReply,
-  // Fetch objects from remote Plasma stores.
-  PlasmaFetchRequest,
-  // Wait for objects to be ready either from local or remote Plasma stores.
-  PlasmaWaitRequest,
-  PlasmaWaitReply,
   // Subscribe to a list of objects or to all objects.
   PlasmaSubscribeRequest,
   // Unsubscribe.
@@ -133,6 +135,22 @@ table PlasmaCreateReply {
   ipc_handle: CudaHandle;
 }
 
+table PlasmaCreateAndSealRequest {
+  // ID of the object to be created.
+  object_id: string;
+  // The object's data.
+  data: string;
+  // The object's metadata.
+  metadata: string;
+  // Hash of the object data.
+  digest: string;
+}
+
+table PlasmaCreateAndSealReply {
+  // Error that occurred for this call.
+  error: PlasmaError;
+}
+
 table PlasmaAbortRequest {
   // ID of the object to be aborted.
   object_id: string;
@@ -198,45 +216,20 @@ table PlasmaReleaseReply {
 }
 
 table PlasmaDeleteRequest {
+  // The number of objects to delete.
+  count: int;
   // ID of the object to be deleted.
-  object_id: string;
+  object_ids: [string];
 }
 
 table PlasmaDeleteReply {
+  // The number of objects to delete.
+  count: int;
   // ID of the object that was deleted.
-  object_id: string;
+  object_ids: [string];
   // Error code.
-  error: PlasmaError;
+  errors: [PlasmaError];
 }
-
-table PlasmaStatusRequest {
-  // IDs of the objects stored at local Plasma store we request the status of.
-  object_ids: [string];
-}
-
-enum ObjectStatus:int {
-  // Object is stored in the local Plasma Store.
-  Local = 1,
-  // Object is stored on a remote Plasma store, and it is not stored on the
-  // local Plasma Store.
-  Remote,
-  // Object is not stored in the system.
-  Nonexistent,
-  // Object is currently transferred from a remote Plasma store the local
-  // Plasma Store.
-  Transfer
-}
-
-table PlasmaStatusReply {
-  // IDs of the objects being returned.
-  object_ids: [string];
-  // Status of the object.
-  status: [ObjectStatus];
-}
-
-// PlasmaContains is a subset of PlasmaStatus which does not
-// involve the plasma manager, only the store. We should consider
-// unifying them in the future and deprecating PlasmaContains.
 
 table PlasmaContainsRequest {
   // ID of the object we are querying.
@@ -248,6 +241,13 @@ table PlasmaContainsReply {
   object_id: string;
   // 1 if the object is in the store and 0 otherwise.
   has_object: int;
+}
+
+table PlasmaListRequest {
+}
+
+table PlasmaListReply {
+  objects: [ObjectInfo];
 }
 
 // PlasmaConnect is used by a plasma client the first time it connects with the
@@ -270,43 +270,6 @@ table PlasmaEvictRequest {
 table PlasmaEvictReply {
   // Number of bytes that have been freed.
   num_bytes: ulong;
-}
-
-table PlasmaFetchRequest {
-  // IDs of objects to be gotten.
-  object_ids: [string];
-}
-
-table ObjectRequestSpec {
-  // ID of the object.
-  object_id: string;
-  // The type of the object. This specifies whether we
-  // will be waiting for an object store in the local or
-  // global Plasma store.
-  type: int;
-}
-
-table PlasmaWaitRequest {
-  // Array of object requests whose status we are asking for.
-  object_requests: [ObjectRequestSpec];
-  // Number of objects expected to be returned, if available.
-  num_ready_objects: int;
-  // timeout
-  timeout: long;
-}
-
-table ObjectReply {
-  // ID of the object.
-  object_id: string;
-  // The object status. This specifies where the object is stored.
-  status: int;
-}
-
-table PlasmaWaitReply {
-  // Array of object requests being returned.
-  object_requests: [ObjectReply];
-  // Number of objects expected to be returned, if available.
-  num_ready_objects: int;
 }
 
 table PlasmaSubscribeRequest {

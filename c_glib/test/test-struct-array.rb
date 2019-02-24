@@ -50,7 +50,7 @@ class TestStructArray < Test::Unit::TestCase
                                         -1))
   end
 
-  def test_fields
+  def test_flatten
     fields = [
       Arrow::Field.new("score", Arrow::Int8DataType.new),
       Arrow::Field.new("enabled", Arrow::BooleanDataType.new),
@@ -58,13 +58,13 @@ class TestStructArray < Test::Unit::TestCase
     data_type = Arrow::StructDataType.new(fields)
     builder = Arrow::StructArrayBuilder.new(data_type)
 
-    builder.append
-    builder.get_field_builder(0).append(-29)
-    builder.get_field_builder(1).append(true)
+    builder.append_value
+    builder.get_field_builder(0).append_value(-29)
+    builder.get_field_builder(1).append_value(true)
 
-    builder.append
-    builder.field_builders[0].append(2)
-    builder.field_builders[1].append(false)
+    builder.append_value
+    builder.field_builders[0].append_value(2)
+    builder.field_builders[1].append_value(false)
 
     array = builder.finish
     values = array.length.times.collect do |i|
@@ -74,7 +74,7 @@ class TestStructArray < Test::Unit::TestCase
           array.get_field(1).get_value(i),
         ]
       else
-        array.fields.collect do |field|
+        array.flatten.collect do |field|
           field.get_value(i)
         end
       end

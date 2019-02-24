@@ -19,14 +19,15 @@
 
 # [Apache Arrow](https://github.com/apache/arrow) in JS
 
+[![npm version](https://img.shields.io/npm/v/apache-arrow.svg)](https://www.npmjs.com/package/apache-arrow)
 [![Build Status](https://travis-ci.org/apache/arrow.svg?branch=master)](https://travis-ci.org/apache/arrow)
 [![Coverage Status](https://coveralls.io/repos/github/apache/arrow/badge.svg)](https://coveralls.io/github/apache/arrow)
 
 Arrow is a set of technologies that enable big data systems to process and transfer data quickly.
 
-## install [apache-arrow from npm](https://www.npmjs.com/package/apache-arrow)
+## Install `apache-arrow` from NPM
 
-`npm install apache-arrow`
+`npm install apache-arrow` or `yarn add apache-arrow`
 
 (read about how we [package apache-arrow](#packaging) below)
 
@@ -36,11 +37,19 @@ Arrow is a set of technologies that enable big data systems to process and trans
 
 Apache Arrow is the emerging standard for large in-memory columnar data ([Spark](https://spark.apache.org/), [Pandas](http://wesmckinney.com/blog/pandas-and-apache-arrow/), [Drill](https://drill.apache.org/), [Graphistry](https://www.graphistry.com), ...). By standardizing on a common binary interchange format, big data systems can reduce the costs and friction associated with cross-system communication.
 
-# Usage
+# Get Started
 
-## Get a table from an Arrow file on disk
+Check out our [API documentation][7] to learn more about how to use Apache Arrow's JS implementation. You can also learn by example by checking out some of the following resources:
 
-```es6
+* [Observable: Introduction to Apache Arrow][5]
+* [Observable: Manipulating flat arrays arrow-style][6]
+* [/js/test/unit](https://github.com/apache/arrow/tree/master/js/test/unit) - Unit tests for Table and Vector
+
+## Cookbook
+
+### Get a table from an Arrow file on disk (in IPC format)
+
+```js
 import { readFileSync } from 'fs';
 import { Table } from 'apache-arrow';
 
@@ -59,9 +68,9 @@ null, null, null
 */
 ```
 
-## Create a Table when the Arrow file is split across buffers
+### Create a Table when the Arrow file is split across buffers
 
-```es6
+```js
 import { readFileSync } from 'fs';
 import { Table } from 'apache-arrow';
 
@@ -82,9 +91,44 @@ console.log(table.toString());
 */
 ```
 
-## Columns are what you'd expect
+### Create a Table from JavaScript arrays
 
-```es6
+```js
+import {
+  Table,
+  FloatVector,
+  DateVector
+} from 'apache-arrow';
+
+const LENGTH = 2000;
+
+const rainAmounts = Float32Array.from(
+  { length: LENGTH },
+  () => Number((Math.random() * 20).toFixed(1)));
+
+const rainDates = Array.from(
+  { length: LENGTH },
+  (_, i) => new Date(Date.now() - 1000 * 60 * 60 * 24 * i));
+
+const rainfall = Table.new(
+  [FloatVector.from(rainAmounts), DateVector.from(rainDates)],
+  ['precipitation', 'date']
+);
+```
+
+### Load data with `fetch`
+
+```js
+import { Table } from "apache-arrow";
+
+const table = await Table.from(fetch(("/simple.arrow")));
+console.log(table.toString());
+
+```
+
+### Columns look like JS Arrays
+
+```js
 import { readFileSync } from 'fs';
 import { Table } from 'apache-arrow';
 
@@ -93,9 +137,10 @@ const table = Table.from([
     'latlong/records.arrow'
 ].map(readFileSync));
 
-const column = table.col('origin_lat');
-const typed = column.slice();
+const column = table.getColumn('origin_lat');
 
+// Copy the data into a TypedArray
+const typed = column.toArray();
 assert(typed instanceof Float32Array);
 
 for (let i = -1, n = column.length; ++i < n;) {
@@ -103,9 +148,9 @@ for (let i = -1, n = column.length; ++i < n;) {
 }
 ```
 
-## Usage with MapD Core
+### Usage with MapD Core
 
-```es6
+```js
 import MapD from 'rxjs-mapd';
 import { Table } from 'apache-arrow';
 
@@ -128,7 +173,7 @@ MapD.open(host, port)
   )
   .map(([schema, records]) =>
     // Create Arrow Table from results
-    Table.from(schema, records))
+    Table.from([schema, records]))
   .map((table) =>
     // Stringify the table to CSV with row numbers
     table.toString({ index: true }))
@@ -146,7 +191,7 @@ Index,   origin_city
 
 # Getting involved
 
-See [develop.md](https://github.com/apache/arrow/blob/master/develop.md)
+See [DEVELOP.md](DEVELOP.md)
 
 Even if you do not plan to contribute to Apache Arrow itself or Arrow
 integrations in other projects, we'd be happy to have you involved:
@@ -201,18 +246,19 @@ If you think we missed a compilation target and it's a blocker for adoption, ple
 
 Full list of broader Apache Arrow [committers](https://arrow.apache.org/committers/).
 
-* Brian Hulette, CCRi,  _contributor_
+* Brian Hulette,  _committer_
 * Paul Taylor, Graphistry, Inc.,  _committer_
 
-# Powered By Apache Arrow in JS 
+# Powered By Apache Arrow in JS
 
 Full list of broader Apache Arrow [projects & organizations](https://github.com/apache/arrow/blob/master/site/powered_by.md).
- 
+
 ## Open Source Projects
 
 * [Apache Arrow](https://arrow.apache.org) -- Parent project for Powering Columnar In-Memory Analytics, including affiliated open source projects
 * [rxjs-mapd](https://github.com/graphistry/rxjs-mapd) -- A MapD Core node-driver that returns query results as Arrow columns
-* [Perspective](https://github.com/jpmorganchase/perspective) -- Perspective is a streaming data visualization engine by J.P. Morgan for JavaScript for building real-time & user-configurable analytics entirely in the browser. 
+* [Perspective](https://github.com/jpmorganchase/perspective) -- Perspective is a streaming data visualization engine by J.P. Morgan for JavaScript for building real-time & user-configurable analytics entirely in the browser.
+* [Falcon](https://github.com/uwdata/falcon) is a visualization tool for linked interactions across multiple aggregate visualizations of millions or billions of records. 
 
 ## Companies & Organizations
 
@@ -228,3 +274,6 @@ Full list of broader Apache Arrow [projects & organizations](https://github.com/
 [2]: https://github.com/apache/arrow/tree/master/format
 [3]: https://issues.apache.org/jira/browse/ARROW
 [4]: https://github.com/apache/arrow
+[5]: https://beta.observablehq.com/@theneuralbit/introduction-to-apache-arrow
+[6]: https://beta.observablehq.com/@lmeyerov/manipulating-flat-arrays-arrow-style
+[7]: http://arrow.apache.org/docs/js/

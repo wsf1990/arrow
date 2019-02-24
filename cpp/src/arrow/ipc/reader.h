@@ -33,6 +33,7 @@ class Buffer;
 class Schema;
 class Status;
 class Tensor;
+class SparseTensor;
 
 namespace io {
 
@@ -174,6 +175,14 @@ class ARROW_EXPORT RecordBatchFileReader {
 ARROW_EXPORT
 Status ReadSchema(io::InputStream* stream, std::shared_ptr<Schema>* out);
 
+/// \brief Read Schema from encapsulated Message
+///
+/// \param[in] message a message instance containing metadata
+/// \param[out] out the resulting Schema
+/// \return Status
+ARROW_EXPORT
+Status ReadSchema(const Message& message, std::shared_ptr<Schema>* out);
+
 /// Read record batch as encapsulated IPC message with metadata size prefix and
 /// header
 ///
@@ -196,7 +205,7 @@ ARROW_EXPORT
 Status ReadRecordBatch(const Buffer& metadata, const std::shared_ptr<Schema>& schema,
                        io::RandomAccessFile* file, std::shared_ptr<RecordBatch>* out);
 
-/// \brief Read record batch from encapulated Message
+/// \brief Read record batch from encapsulated Message
 ///
 /// \param[in] message a message instance containing metadata and body
 /// \param[in] schema the record batch schema
@@ -219,15 +228,13 @@ Status ReadRecordBatch(const Buffer& metadata, const std::shared_ptr<Schema>& sc
                        int max_recursion_depth, io::RandomAccessFile* file,
                        std::shared_ptr<RecordBatch>* out);
 
-/// \brief EXPERIMENTAL: Read arrow::Tensor as encapsulated IPC message in file
+/// \brief Read arrow::Tensor as encapsulated IPC message in file
 ///
-/// \param[in] offset the file location of the start of the message
-/// \param[in] file the file where the batch is located
+/// \param[in] file an InputStream pointed at the start of the message
 /// \param[out] out the read tensor
 /// \return Status
 ARROW_EXPORT
-Status ReadTensor(int64_t offset, io::RandomAccessFile* file,
-                  std::shared_ptr<Tensor>* out);
+Status ReadTensor(io::InputStream* file, std::shared_ptr<Tensor>* out);
 
 /// \brief EXPERIMENTAL: Read arrow::Tensor from IPC message
 ///
@@ -236,6 +243,22 @@ Status ReadTensor(int64_t offset, io::RandomAccessFile* file,
 /// \return Status
 ARROW_EXPORT
 Status ReadTensor(const Message& message, std::shared_ptr<Tensor>* out);
+
+/// \brief EXPERIMETNAL: Read arrow::SparseTensor as encapsulated IPC message in file
+///
+/// \param[in] file an InputStream pointed at the start of the message
+/// \param[out] out the read sparse tensor
+/// \return Status
+ARROW_EXPORT
+Status ReadSparseTensor(io::InputStream* file, std::shared_ptr<SparseTensor>* out);
+
+/// \brief EXPERIMENTAL: Read arrow::SparseTensor from IPC message
+///
+/// \param[in] message a Message containing the tensor metadata and body
+/// \param[out] out the read sparse tensor
+/// \return Status
+ARROW_EXPORT
+Status ReadSparseTensor(const Message& message, std::shared_ptr<SparseTensor>* out);
 
 }  // namespace ipc
 }  // namespace arrow

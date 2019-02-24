@@ -218,9 +218,7 @@ static arrow::Status try_dlopen(std::vector<fs::path> potential_paths, const cha
   }
 
   if (out_handle == NULL) {
-    std::stringstream ss;
-    ss << "Unable to load " << name;
-    return arrow::Status::IOError(ss.str());
+    return arrow::Status::IOError("Unable to load ", name);
   }
 
   return arrow::Status::OK();
@@ -243,9 +241,7 @@ static arrow::Status try_dlopen(std::vector<fs::path> potential_paths, const cha
   }
 
   if (out_handle == NULL) {
-    std::stringstream ss;
-    ss << "Unable to load " << name;
-    return arrow::Status::IOError(ss.str());
+    return arrow::Status::IOError("Unable to load ", name);
   }
 
   return arrow::Status::OK();
@@ -316,6 +312,10 @@ void LibHdfsShim::BuilderSetForceNewInstance(hdfsBuilder* bld) {
 
 hdfsFS LibHdfsShim::BuilderConnect(hdfsBuilder* bld) {
   return this->hdfsBuilderConnect(bld);
+}
+
+int LibHdfsShim::BuilderConfSetStr(hdfsBuilder* bld, const char* key, const char* val) {
+  return this->hdfsBuilderConfSetStr(bld, key, val);
 }
 
 int LibHdfsShim::Disconnect(hdfsFS fs) { return this->hdfsDisconnect(fs); }
@@ -495,6 +495,7 @@ Status LibHdfsShim::GetRequiredSymbols() {
   GET_SYMBOL_REQUIRED(this, hdfsBuilderSetUserName);
   GET_SYMBOL_REQUIRED(this, hdfsBuilderSetKerbTicketCachePath);
   GET_SYMBOL_REQUIRED(this, hdfsBuilderSetForceNewInstance);
+  GET_SYMBOL_REQUIRED(this, hdfsBuilderConfSetStr);
   GET_SYMBOL_REQUIRED(this, hdfsBuilderConnect);
   GET_SYMBOL_REQUIRED(this, hdfsCreateDirectory);
   GET_SYMBOL_REQUIRED(this, hdfsDelete);

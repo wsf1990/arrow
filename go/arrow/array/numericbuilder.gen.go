@@ -51,6 +51,7 @@ func (b *Int64Builder) Release() {
 		if b.data != nil {
 			b.data.Release()
 			b.data = nil
+			b.rawData = nil
 		}
 	}
 }
@@ -75,7 +76,7 @@ func (b *Int64Builder) UnsafeAppendBoolToBitmap(isValid bool) {
 	if isValid {
 		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
 	} else {
-		b.nullN++
+		b.nulls++
 	}
 	b.length++
 }
@@ -113,6 +114,7 @@ func (b *Int64Builder) Reserve(n int) {
 // Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
 // additional memory will be allocated. If n is smaller, the allocated memory may reduced.
 func (b *Int64Builder) Resize(n int) {
+	nBuilder := n
 	if n < minBuilderCapacity {
 		n = minBuilderCapacity
 	}
@@ -120,10 +122,16 @@ func (b *Int64Builder) Resize(n int) {
 	if b.capacity == 0 {
 		b.init(n)
 	} else {
-		b.builder.resize(n, b.init)
+		b.builder.resize(nBuilder, b.init)
 		b.data.Resize(arrow.Int64Traits.BytesRequired(n))
 		b.rawData = arrow.Int64Traits.CastFromBytes(b.data.Bytes())
 	}
+}
+
+// NewArray creates a Int64 array from the memory buffers used by the builder and resets the Int64Builder
+// so it can be used to build a new array.
+func (b *Int64Builder) NewArray() Interface {
+	return b.NewInt64Array()
 }
 
 // NewInt64Array creates a Int64 array from the memory buffers used by the builder and resets the Int64Builder
@@ -141,7 +149,7 @@ func (b *Int64Builder) newData() (data *Data) {
 		// trim buffers
 		b.data.Resize(bytesRequired)
 	}
-	data = NewData(arrow.PrimitiveTypes.Int64, b.length, []*memory.Buffer{b.nullBitmap, b.data}, b.nullN)
+	data = NewData(arrow.PrimitiveTypes.Int64, b.length, []*memory.Buffer{b.nullBitmap, b.data}, nil, b.nulls, 0)
 	b.reset()
 
 	if b.data != nil {
@@ -177,6 +185,7 @@ func (b *Uint64Builder) Release() {
 		if b.data != nil {
 			b.data.Release()
 			b.data = nil
+			b.rawData = nil
 		}
 	}
 }
@@ -201,7 +210,7 @@ func (b *Uint64Builder) UnsafeAppendBoolToBitmap(isValid bool) {
 	if isValid {
 		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
 	} else {
-		b.nullN++
+		b.nulls++
 	}
 	b.length++
 }
@@ -239,6 +248,7 @@ func (b *Uint64Builder) Reserve(n int) {
 // Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
 // additional memory will be allocated. If n is smaller, the allocated memory may reduced.
 func (b *Uint64Builder) Resize(n int) {
+	nBuilder := n
 	if n < minBuilderCapacity {
 		n = minBuilderCapacity
 	}
@@ -246,10 +256,16 @@ func (b *Uint64Builder) Resize(n int) {
 	if b.capacity == 0 {
 		b.init(n)
 	} else {
-		b.builder.resize(n, b.init)
+		b.builder.resize(nBuilder, b.init)
 		b.data.Resize(arrow.Uint64Traits.BytesRequired(n))
 		b.rawData = arrow.Uint64Traits.CastFromBytes(b.data.Bytes())
 	}
+}
+
+// NewArray creates a Uint64 array from the memory buffers used by the builder and resets the Uint64Builder
+// so it can be used to build a new array.
+func (b *Uint64Builder) NewArray() Interface {
+	return b.NewUint64Array()
 }
 
 // NewUint64Array creates a Uint64 array from the memory buffers used by the builder and resets the Uint64Builder
@@ -267,7 +283,7 @@ func (b *Uint64Builder) newData() (data *Data) {
 		// trim buffers
 		b.data.Resize(bytesRequired)
 	}
-	data = NewData(arrow.PrimitiveTypes.Uint64, b.length, []*memory.Buffer{b.nullBitmap, b.data}, b.nullN)
+	data = NewData(arrow.PrimitiveTypes.Uint64, b.length, []*memory.Buffer{b.nullBitmap, b.data}, nil, b.nulls, 0)
 	b.reset()
 
 	if b.data != nil {
@@ -303,6 +319,7 @@ func (b *Float64Builder) Release() {
 		if b.data != nil {
 			b.data.Release()
 			b.data = nil
+			b.rawData = nil
 		}
 	}
 }
@@ -327,7 +344,7 @@ func (b *Float64Builder) UnsafeAppendBoolToBitmap(isValid bool) {
 	if isValid {
 		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
 	} else {
-		b.nullN++
+		b.nulls++
 	}
 	b.length++
 }
@@ -365,6 +382,7 @@ func (b *Float64Builder) Reserve(n int) {
 // Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
 // additional memory will be allocated. If n is smaller, the allocated memory may reduced.
 func (b *Float64Builder) Resize(n int) {
+	nBuilder := n
 	if n < minBuilderCapacity {
 		n = minBuilderCapacity
 	}
@@ -372,10 +390,16 @@ func (b *Float64Builder) Resize(n int) {
 	if b.capacity == 0 {
 		b.init(n)
 	} else {
-		b.builder.resize(n, b.init)
+		b.builder.resize(nBuilder, b.init)
 		b.data.Resize(arrow.Float64Traits.BytesRequired(n))
 		b.rawData = arrow.Float64Traits.CastFromBytes(b.data.Bytes())
 	}
+}
+
+// NewArray creates a Float64 array from the memory buffers used by the builder and resets the Float64Builder
+// so it can be used to build a new array.
+func (b *Float64Builder) NewArray() Interface {
+	return b.NewFloat64Array()
 }
 
 // NewFloat64Array creates a Float64 array from the memory buffers used by the builder and resets the Float64Builder
@@ -393,7 +417,7 @@ func (b *Float64Builder) newData() (data *Data) {
 		// trim buffers
 		b.data.Resize(bytesRequired)
 	}
-	data = NewData(arrow.PrimitiveTypes.Float64, b.length, []*memory.Buffer{b.nullBitmap, b.data}, b.nullN)
+	data = NewData(arrow.PrimitiveTypes.Float64, b.length, []*memory.Buffer{b.nullBitmap, b.data}, nil, b.nulls, 0)
 	b.reset()
 
 	if b.data != nil {
@@ -429,6 +453,7 @@ func (b *Int32Builder) Release() {
 		if b.data != nil {
 			b.data.Release()
 			b.data = nil
+			b.rawData = nil
 		}
 	}
 }
@@ -453,7 +478,7 @@ func (b *Int32Builder) UnsafeAppendBoolToBitmap(isValid bool) {
 	if isValid {
 		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
 	} else {
-		b.nullN++
+		b.nulls++
 	}
 	b.length++
 }
@@ -491,6 +516,7 @@ func (b *Int32Builder) Reserve(n int) {
 // Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
 // additional memory will be allocated. If n is smaller, the allocated memory may reduced.
 func (b *Int32Builder) Resize(n int) {
+	nBuilder := n
 	if n < minBuilderCapacity {
 		n = minBuilderCapacity
 	}
@@ -498,10 +524,16 @@ func (b *Int32Builder) Resize(n int) {
 	if b.capacity == 0 {
 		b.init(n)
 	} else {
-		b.builder.resize(n, b.init)
+		b.builder.resize(nBuilder, b.init)
 		b.data.Resize(arrow.Int32Traits.BytesRequired(n))
 		b.rawData = arrow.Int32Traits.CastFromBytes(b.data.Bytes())
 	}
+}
+
+// NewArray creates a Int32 array from the memory buffers used by the builder and resets the Int32Builder
+// so it can be used to build a new array.
+func (b *Int32Builder) NewArray() Interface {
+	return b.NewInt32Array()
 }
 
 // NewInt32Array creates a Int32 array from the memory buffers used by the builder and resets the Int32Builder
@@ -519,7 +551,7 @@ func (b *Int32Builder) newData() (data *Data) {
 		// trim buffers
 		b.data.Resize(bytesRequired)
 	}
-	data = NewData(arrow.PrimitiveTypes.Int32, b.length, []*memory.Buffer{b.nullBitmap, b.data}, b.nullN)
+	data = NewData(arrow.PrimitiveTypes.Int32, b.length, []*memory.Buffer{b.nullBitmap, b.data}, nil, b.nulls, 0)
 	b.reset()
 
 	if b.data != nil {
@@ -555,6 +587,7 @@ func (b *Uint32Builder) Release() {
 		if b.data != nil {
 			b.data.Release()
 			b.data = nil
+			b.rawData = nil
 		}
 	}
 }
@@ -579,7 +612,7 @@ func (b *Uint32Builder) UnsafeAppendBoolToBitmap(isValid bool) {
 	if isValid {
 		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
 	} else {
-		b.nullN++
+		b.nulls++
 	}
 	b.length++
 }
@@ -617,6 +650,7 @@ func (b *Uint32Builder) Reserve(n int) {
 // Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
 // additional memory will be allocated. If n is smaller, the allocated memory may reduced.
 func (b *Uint32Builder) Resize(n int) {
+	nBuilder := n
 	if n < minBuilderCapacity {
 		n = minBuilderCapacity
 	}
@@ -624,10 +658,16 @@ func (b *Uint32Builder) Resize(n int) {
 	if b.capacity == 0 {
 		b.init(n)
 	} else {
-		b.builder.resize(n, b.init)
+		b.builder.resize(nBuilder, b.init)
 		b.data.Resize(arrow.Uint32Traits.BytesRequired(n))
 		b.rawData = arrow.Uint32Traits.CastFromBytes(b.data.Bytes())
 	}
+}
+
+// NewArray creates a Uint32 array from the memory buffers used by the builder and resets the Uint32Builder
+// so it can be used to build a new array.
+func (b *Uint32Builder) NewArray() Interface {
+	return b.NewUint32Array()
 }
 
 // NewUint32Array creates a Uint32 array from the memory buffers used by the builder and resets the Uint32Builder
@@ -645,7 +685,7 @@ func (b *Uint32Builder) newData() (data *Data) {
 		// trim buffers
 		b.data.Resize(bytesRequired)
 	}
-	data = NewData(arrow.PrimitiveTypes.Uint32, b.length, []*memory.Buffer{b.nullBitmap, b.data}, b.nullN)
+	data = NewData(arrow.PrimitiveTypes.Uint32, b.length, []*memory.Buffer{b.nullBitmap, b.data}, nil, b.nulls, 0)
 	b.reset()
 
 	if b.data != nil {
@@ -681,6 +721,7 @@ func (b *Float32Builder) Release() {
 		if b.data != nil {
 			b.data.Release()
 			b.data = nil
+			b.rawData = nil
 		}
 	}
 }
@@ -705,7 +746,7 @@ func (b *Float32Builder) UnsafeAppendBoolToBitmap(isValid bool) {
 	if isValid {
 		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
 	} else {
-		b.nullN++
+		b.nulls++
 	}
 	b.length++
 }
@@ -743,6 +784,7 @@ func (b *Float32Builder) Reserve(n int) {
 // Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
 // additional memory will be allocated. If n is smaller, the allocated memory may reduced.
 func (b *Float32Builder) Resize(n int) {
+	nBuilder := n
 	if n < minBuilderCapacity {
 		n = minBuilderCapacity
 	}
@@ -750,10 +792,16 @@ func (b *Float32Builder) Resize(n int) {
 	if b.capacity == 0 {
 		b.init(n)
 	} else {
-		b.builder.resize(n, b.init)
+		b.builder.resize(nBuilder, b.init)
 		b.data.Resize(arrow.Float32Traits.BytesRequired(n))
 		b.rawData = arrow.Float32Traits.CastFromBytes(b.data.Bytes())
 	}
+}
+
+// NewArray creates a Float32 array from the memory buffers used by the builder and resets the Float32Builder
+// so it can be used to build a new array.
+func (b *Float32Builder) NewArray() Interface {
+	return b.NewFloat32Array()
 }
 
 // NewFloat32Array creates a Float32 array from the memory buffers used by the builder and resets the Float32Builder
@@ -771,7 +819,7 @@ func (b *Float32Builder) newData() (data *Data) {
 		// trim buffers
 		b.data.Resize(bytesRequired)
 	}
-	data = NewData(arrow.PrimitiveTypes.Float32, b.length, []*memory.Buffer{b.nullBitmap, b.data}, b.nullN)
+	data = NewData(arrow.PrimitiveTypes.Float32, b.length, []*memory.Buffer{b.nullBitmap, b.data}, nil, b.nulls, 0)
 	b.reset()
 
 	if b.data != nil {
@@ -807,6 +855,7 @@ func (b *Int16Builder) Release() {
 		if b.data != nil {
 			b.data.Release()
 			b.data = nil
+			b.rawData = nil
 		}
 	}
 }
@@ -831,7 +880,7 @@ func (b *Int16Builder) UnsafeAppendBoolToBitmap(isValid bool) {
 	if isValid {
 		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
 	} else {
-		b.nullN++
+		b.nulls++
 	}
 	b.length++
 }
@@ -869,6 +918,7 @@ func (b *Int16Builder) Reserve(n int) {
 // Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
 // additional memory will be allocated. If n is smaller, the allocated memory may reduced.
 func (b *Int16Builder) Resize(n int) {
+	nBuilder := n
 	if n < minBuilderCapacity {
 		n = minBuilderCapacity
 	}
@@ -876,10 +926,16 @@ func (b *Int16Builder) Resize(n int) {
 	if b.capacity == 0 {
 		b.init(n)
 	} else {
-		b.builder.resize(n, b.init)
+		b.builder.resize(nBuilder, b.init)
 		b.data.Resize(arrow.Int16Traits.BytesRequired(n))
 		b.rawData = arrow.Int16Traits.CastFromBytes(b.data.Bytes())
 	}
+}
+
+// NewArray creates a Int16 array from the memory buffers used by the builder and resets the Int16Builder
+// so it can be used to build a new array.
+func (b *Int16Builder) NewArray() Interface {
+	return b.NewInt16Array()
 }
 
 // NewInt16Array creates a Int16 array from the memory buffers used by the builder and resets the Int16Builder
@@ -897,7 +953,7 @@ func (b *Int16Builder) newData() (data *Data) {
 		// trim buffers
 		b.data.Resize(bytesRequired)
 	}
-	data = NewData(arrow.PrimitiveTypes.Int16, b.length, []*memory.Buffer{b.nullBitmap, b.data}, b.nullN)
+	data = NewData(arrow.PrimitiveTypes.Int16, b.length, []*memory.Buffer{b.nullBitmap, b.data}, nil, b.nulls, 0)
 	b.reset()
 
 	if b.data != nil {
@@ -933,6 +989,7 @@ func (b *Uint16Builder) Release() {
 		if b.data != nil {
 			b.data.Release()
 			b.data = nil
+			b.rawData = nil
 		}
 	}
 }
@@ -957,7 +1014,7 @@ func (b *Uint16Builder) UnsafeAppendBoolToBitmap(isValid bool) {
 	if isValid {
 		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
 	} else {
-		b.nullN++
+		b.nulls++
 	}
 	b.length++
 }
@@ -995,6 +1052,7 @@ func (b *Uint16Builder) Reserve(n int) {
 // Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
 // additional memory will be allocated. If n is smaller, the allocated memory may reduced.
 func (b *Uint16Builder) Resize(n int) {
+	nBuilder := n
 	if n < minBuilderCapacity {
 		n = minBuilderCapacity
 	}
@@ -1002,10 +1060,16 @@ func (b *Uint16Builder) Resize(n int) {
 	if b.capacity == 0 {
 		b.init(n)
 	} else {
-		b.builder.resize(n, b.init)
+		b.builder.resize(nBuilder, b.init)
 		b.data.Resize(arrow.Uint16Traits.BytesRequired(n))
 		b.rawData = arrow.Uint16Traits.CastFromBytes(b.data.Bytes())
 	}
+}
+
+// NewArray creates a Uint16 array from the memory buffers used by the builder and resets the Uint16Builder
+// so it can be used to build a new array.
+func (b *Uint16Builder) NewArray() Interface {
+	return b.NewUint16Array()
 }
 
 // NewUint16Array creates a Uint16 array from the memory buffers used by the builder and resets the Uint16Builder
@@ -1023,7 +1087,7 @@ func (b *Uint16Builder) newData() (data *Data) {
 		// trim buffers
 		b.data.Resize(bytesRequired)
 	}
-	data = NewData(arrow.PrimitiveTypes.Uint16, b.length, []*memory.Buffer{b.nullBitmap, b.data}, b.nullN)
+	data = NewData(arrow.PrimitiveTypes.Uint16, b.length, []*memory.Buffer{b.nullBitmap, b.data}, nil, b.nulls, 0)
 	b.reset()
 
 	if b.data != nil {
@@ -1059,6 +1123,7 @@ func (b *Int8Builder) Release() {
 		if b.data != nil {
 			b.data.Release()
 			b.data = nil
+			b.rawData = nil
 		}
 	}
 }
@@ -1083,7 +1148,7 @@ func (b *Int8Builder) UnsafeAppendBoolToBitmap(isValid bool) {
 	if isValid {
 		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
 	} else {
-		b.nullN++
+		b.nulls++
 	}
 	b.length++
 }
@@ -1121,6 +1186,7 @@ func (b *Int8Builder) Reserve(n int) {
 // Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
 // additional memory will be allocated. If n is smaller, the allocated memory may reduced.
 func (b *Int8Builder) Resize(n int) {
+	nBuilder := n
 	if n < minBuilderCapacity {
 		n = minBuilderCapacity
 	}
@@ -1128,10 +1194,16 @@ func (b *Int8Builder) Resize(n int) {
 	if b.capacity == 0 {
 		b.init(n)
 	} else {
-		b.builder.resize(n, b.init)
+		b.builder.resize(nBuilder, b.init)
 		b.data.Resize(arrow.Int8Traits.BytesRequired(n))
 		b.rawData = arrow.Int8Traits.CastFromBytes(b.data.Bytes())
 	}
+}
+
+// NewArray creates a Int8 array from the memory buffers used by the builder and resets the Int8Builder
+// so it can be used to build a new array.
+func (b *Int8Builder) NewArray() Interface {
+	return b.NewInt8Array()
 }
 
 // NewInt8Array creates a Int8 array from the memory buffers used by the builder and resets the Int8Builder
@@ -1149,7 +1221,7 @@ func (b *Int8Builder) newData() (data *Data) {
 		// trim buffers
 		b.data.Resize(bytesRequired)
 	}
-	data = NewData(arrow.PrimitiveTypes.Int8, b.length, []*memory.Buffer{b.nullBitmap, b.data}, b.nullN)
+	data = NewData(arrow.PrimitiveTypes.Int8, b.length, []*memory.Buffer{b.nullBitmap, b.data}, nil, b.nulls, 0)
 	b.reset()
 
 	if b.data != nil {
@@ -1185,6 +1257,7 @@ func (b *Uint8Builder) Release() {
 		if b.data != nil {
 			b.data.Release()
 			b.data = nil
+			b.rawData = nil
 		}
 	}
 }
@@ -1209,7 +1282,7 @@ func (b *Uint8Builder) UnsafeAppendBoolToBitmap(isValid bool) {
 	if isValid {
 		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
 	} else {
-		b.nullN++
+		b.nulls++
 	}
 	b.length++
 }
@@ -1247,6 +1320,7 @@ func (b *Uint8Builder) Reserve(n int) {
 // Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
 // additional memory will be allocated. If n is smaller, the allocated memory may reduced.
 func (b *Uint8Builder) Resize(n int) {
+	nBuilder := n
 	if n < minBuilderCapacity {
 		n = minBuilderCapacity
 	}
@@ -1254,10 +1328,16 @@ func (b *Uint8Builder) Resize(n int) {
 	if b.capacity == 0 {
 		b.init(n)
 	} else {
-		b.builder.resize(n, b.init)
+		b.builder.resize(nBuilder, b.init)
 		b.data.Resize(arrow.Uint8Traits.BytesRequired(n))
 		b.rawData = arrow.Uint8Traits.CastFromBytes(b.data.Bytes())
 	}
+}
+
+// NewArray creates a Uint8 array from the memory buffers used by the builder and resets the Uint8Builder
+// so it can be used to build a new array.
+func (b *Uint8Builder) NewArray() Interface {
+	return b.NewUint8Array()
 }
 
 // NewUint8Array creates a Uint8 array from the memory buffers used by the builder and resets the Uint8Builder
@@ -1275,7 +1355,7 @@ func (b *Uint8Builder) newData() (data *Data) {
 		// trim buffers
 		b.data.Resize(bytesRequired)
 	}
-	data = NewData(arrow.PrimitiveTypes.Uint8, b.length, []*memory.Buffer{b.nullBitmap, b.data}, b.nullN)
+	data = NewData(arrow.PrimitiveTypes.Uint8, b.length, []*memory.Buffer{b.nullBitmap, b.data}, nil, b.nulls, 0)
 	b.reset()
 
 	if b.data != nil {
@@ -1290,13 +1370,13 @@ func (b *Uint8Builder) newData() (data *Data) {
 type TimestampBuilder struct {
 	builder
 
-	typE    *arrow.TimestampType
+	dtype   *arrow.TimestampType
 	data    *memory.Buffer
 	rawData []arrow.Timestamp
 }
 
-func NewTimestampBuilder(mem memory.Allocator, typE *arrow.TimestampType) *TimestampBuilder {
-	return &TimestampBuilder{builder: builder{refCount: 1, mem: mem}, typE: typE}
+func NewTimestampBuilder(mem memory.Allocator, dtype *arrow.TimestampType) *TimestampBuilder {
+	return &TimestampBuilder{builder: builder{refCount: 1, mem: mem}, dtype: dtype}
 }
 
 // Release decreases the reference count by 1.
@@ -1312,6 +1392,7 @@ func (b *TimestampBuilder) Release() {
 		if b.data != nil {
 			b.data.Release()
 			b.data = nil
+			b.rawData = nil
 		}
 	}
 }
@@ -1336,7 +1417,7 @@ func (b *TimestampBuilder) UnsafeAppendBoolToBitmap(isValid bool) {
 	if isValid {
 		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
 	} else {
-		b.nullN++
+		b.nulls++
 	}
 	b.length++
 }
@@ -1374,6 +1455,7 @@ func (b *TimestampBuilder) Reserve(n int) {
 // Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
 // additional memory will be allocated. If n is smaller, the allocated memory may reduced.
 func (b *TimestampBuilder) Resize(n int) {
+	nBuilder := n
 	if n < minBuilderCapacity {
 		n = minBuilderCapacity
 	}
@@ -1381,10 +1463,16 @@ func (b *TimestampBuilder) Resize(n int) {
 	if b.capacity == 0 {
 		b.init(n)
 	} else {
-		b.builder.resize(n, b.init)
+		b.builder.resize(nBuilder, b.init)
 		b.data.Resize(arrow.TimestampTraits.BytesRequired(n))
 		b.rawData = arrow.TimestampTraits.CastFromBytes(b.data.Bytes())
 	}
+}
+
+// NewArray creates a Timestamp array from the memory buffers used by the builder and resets the TimestampBuilder
+// so it can be used to build a new array.
+func (b *TimestampBuilder) NewArray() Interface {
+	return b.NewTimestampArray()
 }
 
 // NewTimestampArray creates a Timestamp array from the memory buffers used by the builder and resets the TimestampBuilder
@@ -1402,7 +1490,7 @@ func (b *TimestampBuilder) newData() (data *Data) {
 		// trim buffers
 		b.data.Resize(bytesRequired)
 	}
-	data = NewData(b.typE, b.length, []*memory.Buffer{b.nullBitmap, b.data}, b.nullN)
+	data = NewData(b.dtype, b.length, []*memory.Buffer{b.nullBitmap, b.data}, nil, b.nulls, 0)
 	b.reset()
 
 	if b.data != nil {
@@ -1413,3 +1501,559 @@ func (b *TimestampBuilder) newData() (data *Data) {
 
 	return
 }
+
+type Time32Builder struct {
+	builder
+
+	dtype   *arrow.Time32Type
+	data    *memory.Buffer
+	rawData []arrow.Time32
+}
+
+func NewTime32Builder(mem memory.Allocator, dtype *arrow.Time32Type) *Time32Builder {
+	return &Time32Builder{builder: builder{refCount: 1, mem: mem}, dtype: dtype}
+}
+
+// Release decreases the reference count by 1.
+// When the reference count goes to zero, the memory is freed.
+func (b *Time32Builder) Release() {
+	debug.Assert(atomic.LoadInt64(&b.refCount) > 0, "too many releases")
+
+	if atomic.AddInt64(&b.refCount, -1) == 0 {
+		if b.nullBitmap != nil {
+			b.nullBitmap.Release()
+			b.nullBitmap = nil
+		}
+		if b.data != nil {
+			b.data.Release()
+			b.data = nil
+			b.rawData = nil
+		}
+	}
+}
+
+func (b *Time32Builder) Append(v arrow.Time32) {
+	b.Reserve(1)
+	b.UnsafeAppend(v)
+}
+
+func (b *Time32Builder) AppendNull() {
+	b.Reserve(1)
+	b.UnsafeAppendBoolToBitmap(false)
+}
+
+func (b *Time32Builder) UnsafeAppend(v arrow.Time32) {
+	bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
+	b.rawData[b.length] = v
+	b.length++
+}
+
+func (b *Time32Builder) UnsafeAppendBoolToBitmap(isValid bool) {
+	if isValid {
+		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
+	} else {
+		b.nulls++
+	}
+	b.length++
+}
+
+// AppendValues will append the values in the v slice. The valid slice determines which values
+// in v are valid (not null). The valid slice must either be empty or be equal in length to v. If empty,
+// all values in v are appended and considered valid.
+func (b *Time32Builder) AppendValues(v []arrow.Time32, valid []bool) {
+	if len(v) != len(valid) && len(valid) != 0 {
+		panic("len(v) != len(valid) && len(valid) != 0")
+	}
+
+	b.Reserve(len(v))
+	if len(v) > 0 {
+		arrow.Time32Traits.Copy(b.rawData[b.length:], v)
+	}
+	b.builder.unsafeAppendBoolsToBitmap(valid, len(v))
+}
+
+func (b *Time32Builder) init(capacity int) {
+	b.builder.init(capacity)
+
+	b.data = memory.NewResizableBuffer(b.mem)
+	bytesN := arrow.Time32Traits.BytesRequired(capacity)
+	b.data.Resize(bytesN)
+	b.rawData = arrow.Time32Traits.CastFromBytes(b.data.Bytes())
+}
+
+// Reserve ensures there is enough space for appending n elements
+// by checking the capacity and calling Resize if necessary.
+func (b *Time32Builder) Reserve(n int) {
+	b.builder.reserve(n, b.Resize)
+}
+
+// Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
+// additional memory will be allocated. If n is smaller, the allocated memory may reduced.
+func (b *Time32Builder) Resize(n int) {
+	nBuilder := n
+	if n < minBuilderCapacity {
+		n = minBuilderCapacity
+	}
+
+	if b.capacity == 0 {
+		b.init(n)
+	} else {
+		b.builder.resize(nBuilder, b.init)
+		b.data.Resize(arrow.Time32Traits.BytesRequired(n))
+		b.rawData = arrow.Time32Traits.CastFromBytes(b.data.Bytes())
+	}
+}
+
+// NewArray creates a Time32 array from the memory buffers used by the builder and resets the Time32Builder
+// so it can be used to build a new array.
+func (b *Time32Builder) NewArray() Interface {
+	return b.NewTime32Array()
+}
+
+// NewTime32Array creates a Time32 array from the memory buffers used by the builder and resets the Time32Builder
+// so it can be used to build a new array.
+func (b *Time32Builder) NewTime32Array() (a *Time32) {
+	data := b.newData()
+	a = NewTime32Data(data)
+	data.Release()
+	return
+}
+
+func (b *Time32Builder) newData() (data *Data) {
+	bytesRequired := arrow.Time32Traits.BytesRequired(b.length)
+	if bytesRequired > 0 && bytesRequired < b.data.Len() {
+		// trim buffers
+		b.data.Resize(bytesRequired)
+	}
+	data = NewData(b.dtype, b.length, []*memory.Buffer{b.nullBitmap, b.data}, nil, b.nulls, 0)
+	b.reset()
+
+	if b.data != nil {
+		b.data.Release()
+		b.data = nil
+		b.rawData = nil
+	}
+
+	return
+}
+
+type Time64Builder struct {
+	builder
+
+	dtype   *arrow.Time64Type
+	data    *memory.Buffer
+	rawData []arrow.Time64
+}
+
+func NewTime64Builder(mem memory.Allocator, dtype *arrow.Time64Type) *Time64Builder {
+	return &Time64Builder{builder: builder{refCount: 1, mem: mem}, dtype: dtype}
+}
+
+// Release decreases the reference count by 1.
+// When the reference count goes to zero, the memory is freed.
+func (b *Time64Builder) Release() {
+	debug.Assert(atomic.LoadInt64(&b.refCount) > 0, "too many releases")
+
+	if atomic.AddInt64(&b.refCount, -1) == 0 {
+		if b.nullBitmap != nil {
+			b.nullBitmap.Release()
+			b.nullBitmap = nil
+		}
+		if b.data != nil {
+			b.data.Release()
+			b.data = nil
+			b.rawData = nil
+		}
+	}
+}
+
+func (b *Time64Builder) Append(v arrow.Time64) {
+	b.Reserve(1)
+	b.UnsafeAppend(v)
+}
+
+func (b *Time64Builder) AppendNull() {
+	b.Reserve(1)
+	b.UnsafeAppendBoolToBitmap(false)
+}
+
+func (b *Time64Builder) UnsafeAppend(v arrow.Time64) {
+	bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
+	b.rawData[b.length] = v
+	b.length++
+}
+
+func (b *Time64Builder) UnsafeAppendBoolToBitmap(isValid bool) {
+	if isValid {
+		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
+	} else {
+		b.nulls++
+	}
+	b.length++
+}
+
+// AppendValues will append the values in the v slice. The valid slice determines which values
+// in v are valid (not null). The valid slice must either be empty or be equal in length to v. If empty,
+// all values in v are appended and considered valid.
+func (b *Time64Builder) AppendValues(v []arrow.Time64, valid []bool) {
+	if len(v) != len(valid) && len(valid) != 0 {
+		panic("len(v) != len(valid) && len(valid) != 0")
+	}
+
+	b.Reserve(len(v))
+	if len(v) > 0 {
+		arrow.Time64Traits.Copy(b.rawData[b.length:], v)
+	}
+	b.builder.unsafeAppendBoolsToBitmap(valid, len(v))
+}
+
+func (b *Time64Builder) init(capacity int) {
+	b.builder.init(capacity)
+
+	b.data = memory.NewResizableBuffer(b.mem)
+	bytesN := arrow.Time64Traits.BytesRequired(capacity)
+	b.data.Resize(bytesN)
+	b.rawData = arrow.Time64Traits.CastFromBytes(b.data.Bytes())
+}
+
+// Reserve ensures there is enough space for appending n elements
+// by checking the capacity and calling Resize if necessary.
+func (b *Time64Builder) Reserve(n int) {
+	b.builder.reserve(n, b.Resize)
+}
+
+// Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
+// additional memory will be allocated. If n is smaller, the allocated memory may reduced.
+func (b *Time64Builder) Resize(n int) {
+	nBuilder := n
+	if n < minBuilderCapacity {
+		n = minBuilderCapacity
+	}
+
+	if b.capacity == 0 {
+		b.init(n)
+	} else {
+		b.builder.resize(nBuilder, b.init)
+		b.data.Resize(arrow.Time64Traits.BytesRequired(n))
+		b.rawData = arrow.Time64Traits.CastFromBytes(b.data.Bytes())
+	}
+}
+
+// NewArray creates a Time64 array from the memory buffers used by the builder and resets the Time64Builder
+// so it can be used to build a new array.
+func (b *Time64Builder) NewArray() Interface {
+	return b.NewTime64Array()
+}
+
+// NewTime64Array creates a Time64 array from the memory buffers used by the builder and resets the Time64Builder
+// so it can be used to build a new array.
+func (b *Time64Builder) NewTime64Array() (a *Time64) {
+	data := b.newData()
+	a = NewTime64Data(data)
+	data.Release()
+	return
+}
+
+func (b *Time64Builder) newData() (data *Data) {
+	bytesRequired := arrow.Time64Traits.BytesRequired(b.length)
+	if bytesRequired > 0 && bytesRequired < b.data.Len() {
+		// trim buffers
+		b.data.Resize(bytesRequired)
+	}
+	data = NewData(b.dtype, b.length, []*memory.Buffer{b.nullBitmap, b.data}, nil, b.nulls, 0)
+	b.reset()
+
+	if b.data != nil {
+		b.data.Release()
+		b.data = nil
+		b.rawData = nil
+	}
+
+	return
+}
+
+type Date32Builder struct {
+	builder
+
+	data    *memory.Buffer
+	rawData []arrow.Date32
+}
+
+func NewDate32Builder(mem memory.Allocator) *Date32Builder {
+	return &Date32Builder{builder: builder{refCount: 1, mem: mem}}
+}
+
+// Release decreases the reference count by 1.
+// When the reference count goes to zero, the memory is freed.
+func (b *Date32Builder) Release() {
+	debug.Assert(atomic.LoadInt64(&b.refCount) > 0, "too many releases")
+
+	if atomic.AddInt64(&b.refCount, -1) == 0 {
+		if b.nullBitmap != nil {
+			b.nullBitmap.Release()
+			b.nullBitmap = nil
+		}
+		if b.data != nil {
+			b.data.Release()
+			b.data = nil
+			b.rawData = nil
+		}
+	}
+}
+
+func (b *Date32Builder) Append(v arrow.Date32) {
+	b.Reserve(1)
+	b.UnsafeAppend(v)
+}
+
+func (b *Date32Builder) AppendNull() {
+	b.Reserve(1)
+	b.UnsafeAppendBoolToBitmap(false)
+}
+
+func (b *Date32Builder) UnsafeAppend(v arrow.Date32) {
+	bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
+	b.rawData[b.length] = v
+	b.length++
+}
+
+func (b *Date32Builder) UnsafeAppendBoolToBitmap(isValid bool) {
+	if isValid {
+		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
+	} else {
+		b.nulls++
+	}
+	b.length++
+}
+
+// AppendValues will append the values in the v slice. The valid slice determines which values
+// in v are valid (not null). The valid slice must either be empty or be equal in length to v. If empty,
+// all values in v are appended and considered valid.
+func (b *Date32Builder) AppendValues(v []arrow.Date32, valid []bool) {
+	if len(v) != len(valid) && len(valid) != 0 {
+		panic("len(v) != len(valid) && len(valid) != 0")
+	}
+
+	b.Reserve(len(v))
+	if len(v) > 0 {
+		arrow.Date32Traits.Copy(b.rawData[b.length:], v)
+	}
+	b.builder.unsafeAppendBoolsToBitmap(valid, len(v))
+}
+
+func (b *Date32Builder) init(capacity int) {
+	b.builder.init(capacity)
+
+	b.data = memory.NewResizableBuffer(b.mem)
+	bytesN := arrow.Date32Traits.BytesRequired(capacity)
+	b.data.Resize(bytesN)
+	b.rawData = arrow.Date32Traits.CastFromBytes(b.data.Bytes())
+}
+
+// Reserve ensures there is enough space for appending n elements
+// by checking the capacity and calling Resize if necessary.
+func (b *Date32Builder) Reserve(n int) {
+	b.builder.reserve(n, b.Resize)
+}
+
+// Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
+// additional memory will be allocated. If n is smaller, the allocated memory may reduced.
+func (b *Date32Builder) Resize(n int) {
+	nBuilder := n
+	if n < minBuilderCapacity {
+		n = minBuilderCapacity
+	}
+
+	if b.capacity == 0 {
+		b.init(n)
+	} else {
+		b.builder.resize(nBuilder, b.init)
+		b.data.Resize(arrow.Date32Traits.BytesRequired(n))
+		b.rawData = arrow.Date32Traits.CastFromBytes(b.data.Bytes())
+	}
+}
+
+// NewArray creates a Date32 array from the memory buffers used by the builder and resets the Date32Builder
+// so it can be used to build a new array.
+func (b *Date32Builder) NewArray() Interface {
+	return b.NewDate32Array()
+}
+
+// NewDate32Array creates a Date32 array from the memory buffers used by the builder and resets the Date32Builder
+// so it can be used to build a new array.
+func (b *Date32Builder) NewDate32Array() (a *Date32) {
+	data := b.newData()
+	a = NewDate32Data(data)
+	data.Release()
+	return
+}
+
+func (b *Date32Builder) newData() (data *Data) {
+	bytesRequired := arrow.Date32Traits.BytesRequired(b.length)
+	if bytesRequired > 0 && bytesRequired < b.data.Len() {
+		// trim buffers
+		b.data.Resize(bytesRequired)
+	}
+	data = NewData(arrow.PrimitiveTypes.Date32, b.length, []*memory.Buffer{b.nullBitmap, b.data}, nil, b.nulls, 0)
+	b.reset()
+
+	if b.data != nil {
+		b.data.Release()
+		b.data = nil
+		b.rawData = nil
+	}
+
+	return
+}
+
+type Date64Builder struct {
+	builder
+
+	data    *memory.Buffer
+	rawData []arrow.Date64
+}
+
+func NewDate64Builder(mem memory.Allocator) *Date64Builder {
+	return &Date64Builder{builder: builder{refCount: 1, mem: mem}}
+}
+
+// Release decreases the reference count by 1.
+// When the reference count goes to zero, the memory is freed.
+func (b *Date64Builder) Release() {
+	debug.Assert(atomic.LoadInt64(&b.refCount) > 0, "too many releases")
+
+	if atomic.AddInt64(&b.refCount, -1) == 0 {
+		if b.nullBitmap != nil {
+			b.nullBitmap.Release()
+			b.nullBitmap = nil
+		}
+		if b.data != nil {
+			b.data.Release()
+			b.data = nil
+			b.rawData = nil
+		}
+	}
+}
+
+func (b *Date64Builder) Append(v arrow.Date64) {
+	b.Reserve(1)
+	b.UnsafeAppend(v)
+}
+
+func (b *Date64Builder) AppendNull() {
+	b.Reserve(1)
+	b.UnsafeAppendBoolToBitmap(false)
+}
+
+func (b *Date64Builder) UnsafeAppend(v arrow.Date64) {
+	bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
+	b.rawData[b.length] = v
+	b.length++
+}
+
+func (b *Date64Builder) UnsafeAppendBoolToBitmap(isValid bool) {
+	if isValid {
+		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
+	} else {
+		b.nulls++
+	}
+	b.length++
+}
+
+// AppendValues will append the values in the v slice. The valid slice determines which values
+// in v are valid (not null). The valid slice must either be empty or be equal in length to v. If empty,
+// all values in v are appended and considered valid.
+func (b *Date64Builder) AppendValues(v []arrow.Date64, valid []bool) {
+	if len(v) != len(valid) && len(valid) != 0 {
+		panic("len(v) != len(valid) && len(valid) != 0")
+	}
+
+	b.Reserve(len(v))
+	if len(v) > 0 {
+		arrow.Date64Traits.Copy(b.rawData[b.length:], v)
+	}
+	b.builder.unsafeAppendBoolsToBitmap(valid, len(v))
+}
+
+func (b *Date64Builder) init(capacity int) {
+	b.builder.init(capacity)
+
+	b.data = memory.NewResizableBuffer(b.mem)
+	bytesN := arrow.Date64Traits.BytesRequired(capacity)
+	b.data.Resize(bytesN)
+	b.rawData = arrow.Date64Traits.CastFromBytes(b.data.Bytes())
+}
+
+// Reserve ensures there is enough space for appending n elements
+// by checking the capacity and calling Resize if necessary.
+func (b *Date64Builder) Reserve(n int) {
+	b.builder.reserve(n, b.Resize)
+}
+
+// Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
+// additional memory will be allocated. If n is smaller, the allocated memory may reduced.
+func (b *Date64Builder) Resize(n int) {
+	nBuilder := n
+	if n < minBuilderCapacity {
+		n = minBuilderCapacity
+	}
+
+	if b.capacity == 0 {
+		b.init(n)
+	} else {
+		b.builder.resize(nBuilder, b.init)
+		b.data.Resize(arrow.Date64Traits.BytesRequired(n))
+		b.rawData = arrow.Date64Traits.CastFromBytes(b.data.Bytes())
+	}
+}
+
+// NewArray creates a Date64 array from the memory buffers used by the builder and resets the Date64Builder
+// so it can be used to build a new array.
+func (b *Date64Builder) NewArray() Interface {
+	return b.NewDate64Array()
+}
+
+// NewDate64Array creates a Date64 array from the memory buffers used by the builder and resets the Date64Builder
+// so it can be used to build a new array.
+func (b *Date64Builder) NewDate64Array() (a *Date64) {
+	data := b.newData()
+	a = NewDate64Data(data)
+	data.Release()
+	return
+}
+
+func (b *Date64Builder) newData() (data *Data) {
+	bytesRequired := arrow.Date64Traits.BytesRequired(b.length)
+	if bytesRequired > 0 && bytesRequired < b.data.Len() {
+		// trim buffers
+		b.data.Resize(bytesRequired)
+	}
+	data = NewData(arrow.PrimitiveTypes.Date64, b.length, []*memory.Buffer{b.nullBitmap, b.data}, nil, b.nulls, 0)
+	b.reset()
+
+	if b.data != nil {
+		b.data.Release()
+		b.data = nil
+		b.rawData = nil
+	}
+
+	return
+}
+
+var (
+	_ Builder = (*Int64Builder)(nil)
+	_ Builder = (*Uint64Builder)(nil)
+	_ Builder = (*Float64Builder)(nil)
+	_ Builder = (*Int32Builder)(nil)
+	_ Builder = (*Uint32Builder)(nil)
+	_ Builder = (*Float32Builder)(nil)
+	_ Builder = (*Int16Builder)(nil)
+	_ Builder = (*Uint16Builder)(nil)
+	_ Builder = (*Int8Builder)(nil)
+	_ Builder = (*Uint8Builder)(nil)
+	_ Builder = (*TimestampBuilder)(nil)
+	_ Builder = (*Time32Builder)(nil)
+	_ Builder = (*Time64Builder)(nil)
+	_ Builder = (*Date32Builder)(nil)
+	_ Builder = (*Date64Builder)(nil)
+)

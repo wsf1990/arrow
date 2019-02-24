@@ -15,22 +15,28 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "gtest/gtest.h"
+#include <gtest/gtest.h>
 
-#include "arrow/array.h"
+#include "arrow/builder.h"
 #include "arrow/record_batch.h"
 #include "arrow/status.h"
-#include "arrow/table.h"
 #include "arrow/table_builder.h"
-#include "arrow/test-common.h"
-#include "arrow/test-util.h"
+#include "arrow/testing/gtest_common.h"
+#include "arrow/testing/gtest_util.h"
 #include "arrow/type.h"
+#include "arrow/util/checked_cast.h"
 
 namespace arrow {
+
+class Array;
+
+using internal::checked_cast;
 
 class TestRecordBatchBuilder : public TestBase {
  public:
@@ -58,7 +64,7 @@ void AppendValues(BuilderType* builder, const std::vector<T>& values,
 template <typename ValueType, typename T>
 void AppendList(ListBuilder* builder, const std::vector<std::vector<T>>& values,
                 const std::vector<bool>& is_valid) {
-  auto values_builder = static_cast<ValueType*>(builder->value_builder());
+  auto values_builder = checked_cast<ValueType*>(builder->value_builder());
 
   for (size_t i = 0; i < values.size(); ++i) {
     if (is_valid.size() == 0 || is_valid[i]) {
@@ -108,7 +114,7 @@ TEST_F(TestRecordBatchBuilder, Basics) {
   const int kIter = 3;
   for (int i = 0; i < kIter; ++i) {
     AppendData(builder->GetFieldAs<Int32Builder>(0),
-               static_cast<StringBuilder*>(builder->GetField(1)),
+               checked_cast<StringBuilder*>(builder->GetField(1)),
                builder->GetFieldAs<ListBuilder>(2));
 
     std::shared_ptr<RecordBatch> batch;

@@ -21,6 +21,7 @@ from libc.stdint cimport *
 from libcpp cimport bool as c_bool, nullptr
 from libcpp.memory cimport shared_ptr, unique_ptr, make_shared
 from libcpp.string cimport string as c_string
+from libcpp.utility cimport pair
 from libcpp.vector cimport vector
 from libcpp.unordered_map cimport unordered_map
 from libcpp.unordered_set cimport unordered_set
@@ -40,8 +41,12 @@ cdef extern from "numpy/halffloat.h":
 
 cdef extern from "arrow/api.h" namespace "arrow" nogil:
     # We can later add more of the common status factory methods as needed
-    cdef CStatus CStatus_OK "Status::OK"()
-    cdef CStatus CStatus_Invalid "Status::Invalid"()
+    cdef CStatus CStatus_OK "arrow::Status::OK"()
+    cdef CStatus CStatus_Invalid "arrow::Status::Invalid"()
+    cdef CStatus CStatus_NotImplemented \
+        "arrow::Status::NotImplemented"(const c_string& msg)
+    cdef CStatus CStatus_UnknownError \
+        "arrow::Status::UnknownError"(const c_string& msg)
 
     cdef cppclass CStatus "arrow::Status":
         CStatus()
@@ -56,6 +61,7 @@ cdef extern from "arrow/api.h" namespace "arrow" nogil:
         c_bool IsKeyError()
         c_bool IsNotImplemented()
         c_bool IsTypeError()
+        c_bool IsCapacityError()
         c_bool IsSerializationError()
         c_bool IsPythonError()
         c_bool IsPlasmaObjectExists()

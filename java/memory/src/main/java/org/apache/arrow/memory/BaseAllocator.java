@@ -1,14 +1,13 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- * <p>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,27 +17,26 @@
 
 package org.apache.arrow.memory;
 
-import com.google.common.base.Preconditions;
-
-import io.netty.buffer.ArrowBuf;
-import io.netty.buffer.UnsafeDirectLittleEndian;
-import io.netty.util.internal.OutOfDirectMemoryError;
-
-import org.apache.arrow.memory.AllocationManager.BufferLedger;
-import org.apache.arrow.memory.util.AssertionUtil;
-import org.apache.arrow.memory.util.HistoricalLog;
-
 import java.util.Arrays;
 import java.util.IdentityHashMap;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.apache.arrow.memory.AllocationManager.BufferLedger;
+import org.apache.arrow.memory.util.AssertionUtil;
+import org.apache.arrow.memory.util.HistoricalLog;
+import org.apache.arrow.util.Preconditions;
+
+import io.netty.buffer.ArrowBuf;
+import io.netty.buffer.UnsafeDirectLittleEndian;
+import io.netty.util.internal.OutOfDirectMemoryError;
+
 public abstract class BaseAllocator extends Accountant implements BufferAllocator {
 
   public static final String DEBUG_ALLOCATOR = "arrow.memory.debug.allocator";
   public static final int DEBUG_LOG_LENGTH = 6;
-  public static final boolean DEBUG = AssertionUtil.isAssertionsEnabled()
-      || Boolean.parseBoolean(System.getProperty(DEBUG_ALLOCATOR, "false"));
+  public static final boolean DEBUG = AssertionUtil.isAssertionsEnabled() ||
+      Boolean.parseBoolean(System.getProperty(DEBUG_ALLOCATOR, "false"));
   private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(BaseAllocator
       .class);
   // Package exposed for sharing between AllocatorManger and BaseAllocator objects
@@ -56,28 +54,22 @@ public abstract class BaseAllocator extends Accountant implements BufferAllocato
   private final HistoricalLog historicalLog;
   private volatile boolean isClosed = false; // the allocator has been closed
 
+  /**
+   * Initialize an allocator
+   * @param parentAllocator   parent allocator. null if defining a root allocator
+   * @param listener          listener callback. Must be non-null -- use
+   *                          {@link AllocationListener#NOOP} if no listener desired
+   * @param name              name of this allocator
+   * @param initReservation   initial reservation. Cannot be modified after construction
+   * @param maxAllocation     limit. Allocations past the limit fail. Can be modified after
+   *                          construction
+   */
   protected BaseAllocator(
-      final AllocationListener listener,
-      final String name,
-      final long initReservation,
-      final long maxAllocation) throws OutOfMemoryException {
-    this(listener, null, name, initReservation, maxAllocation);
-  }
-
-  protected BaseAllocator(
-      final BaseAllocator parentAllocator,
-      final String name,
-      final long initReservation,
-      final long maxAllocation) throws OutOfMemoryException {
-    this(parentAllocator.listener, parentAllocator, name, initReservation, maxAllocation);
-  }
-
-  private BaseAllocator(
-      final AllocationListener listener,
-      final BaseAllocator parentAllocator,
-      final String name,
-      final long initReservation,
-      final long maxAllocation) throws OutOfMemoryException {
+          final BaseAllocator parentAllocator,
+          final AllocationListener listener,
+          final String name,
+          final long initReservation,
+          final long maxAllocation) throws OutOfMemoryException {
     super(parentAllocator, initReservation, maxAllocation);
 
     this.listener = listener;
@@ -113,17 +105,15 @@ public abstract class BaseAllocator extends Accountant implements BufferAllocato
 
   }
 
-  private static String createErrorMsg(final BufferAllocator allocator, final int rounded, final
-  int requested) {
+  private static String createErrorMsg(final BufferAllocator allocator, final int rounded, final int requested) {
     if (rounded != requested) {
       return String.format(
-          "Unable to allocate buffer of size %d (rounded from %d) due to memory limit. Current " +
-              "allocation: %d",
-          rounded, requested, allocator.getAllocatedMemory());
+        "Unable to allocate buffer of size %d (rounded from %d) due to memory limit. Current " +
+          "allocation: %d", rounded, requested, allocator.getAllocatedMemory());
     } else {
-      return String.format("Unable to allocate buffer of size %d due to memory limit. Current " +
-              "allocation: %d",
-          rounded, allocator.getAllocatedMemory());
+      return String.format(
+        "Unable to allocate buffer of size %d due to memory limit. Current " +
+           "allocation: %d", rounded, allocator.getAllocatedMemory());
     }
   }
 
@@ -163,6 +153,13 @@ public abstract class BaseAllocator extends Accountant implements BufferAllocato
     }
   }
 
+  /**
+   * Specify an indentation amount when using a StringBuilder.
+   *
+   * @param sb StringBuilder to use
+   * @param indent Indentation amount
+   * @return the StringBuilder object with indentation applied
+   */
   public static StringBuilder indent(StringBuilder sb, int indent) {
     final char[] indentation = new char[indent * 2];
     Arrays.fill(indentation, ' ');
@@ -178,9 +175,8 @@ public abstract class BaseAllocator extends Accountant implements BufferAllocato
   public void assertOpen() {
     if (AssertionUtil.ASSERT_ENABLED) {
       if (isClosed) {
-        throw new IllegalStateException("Attempting operation on allocator when allocator is " +
-            "closed.\n"
-            + toVerboseString());
+        throw new IllegalStateException("Attempting operation on allocator when allocator is closed.\n" +
+          toVerboseString());
       }
     }
   }
@@ -241,11 +237,12 @@ public abstract class BaseAllocator extends Accountant implements BufferAllocato
         final Object object = childAllocators.remove(childAllocator);
         if (object == null) {
           childAllocator.historicalLog.logHistory(logger);
-          throw new IllegalStateException("Child allocator[" + childAllocator.name
-              + "] not found in parent allocator[" + name + "]'s childAllocators");
+          throw new IllegalStateException("Child allocator[" + childAllocator.name +
+            "] not found in parent allocator[" + name + "]'s childAllocators");
         }
       }
     }
+    listener.onChildRemoved(this, childAllocator);
   }
 
   @Override
@@ -276,7 +273,13 @@ public abstract class BaseAllocator extends Accountant implements BufferAllocato
         : initialRequestSize;
     AllocationOutcome outcome = this.allocateBytes(actualRequestSize);
     if (!outcome.isOk()) {
-      throw new OutOfMemoryException(createErrorMsg(this, actualRequestSize, initialRequestSize));
+      if (listener.onFailedAllocation(actualRequestSize, outcome)) {
+        // Second try, in case the listener can do something about it
+        outcome = this.allocateBytes(actualRequestSize);
+      }
+      if (!outcome.isOk()) {
+        throw new OutOfMemoryException(createErrorMsg(this, actualRequestSize, initialRequestSize));
+      }
     }
 
     boolean success = false;
@@ -287,9 +290,10 @@ public abstract class BaseAllocator extends Accountant implements BufferAllocato
       return buffer;
     } catch (OutOfMemoryError e) {
       /*
-       * OutOfDirectMemoryError is thrown by Netty when we exceed the direct memory limit defined by -XX:MaxDirectMemorySize.
-       * OutOfMemoryError with "Direct buffer memory" message is thrown by java.nio.Bits when we exceed the direct memory limit.
-       *   This should never be hit in practice as Netty is expected to throw an OutOfDirectMemoryError first.
+       * OutOfDirectMemoryError is thrown by Netty when we exceed the direct memory limit defined by
+       * -XX:MaxDirectMemorySize. OutOfMemoryError with "Direct buffer memory" message is thrown by
+       * java.nio.Bits when we exceed the direct memory limit. This should never be hit in practice
+       * as Netty is expected to throw an OutOfDirectMemoryError first.
        */
       if (e instanceof OutOfDirectMemoryError || "Direct buffer memory".equals(e.getMessage())) {
         throw new OutOfMemoryException(e);
@@ -333,9 +337,18 @@ public abstract class BaseAllocator extends Accountant implements BufferAllocato
       final String name,
       final long initReservation,
       final long maxAllocation) {
+    return newChildAllocator(name, this.listener, initReservation, maxAllocation);
+  }
+
+  @Override
+  public BufferAllocator newChildAllocator(
+      final String name,
+      final AllocationListener listener,
+      final long initReservation,
+      final long maxAllocation) {
     assertOpen();
 
-    final ChildAllocator childAllocator = new ChildAllocator(this, name, initReservation,
+    final ChildAllocator childAllocator = new ChildAllocator(listener, this, name, initReservation,
         maxAllocation);
 
     if (DEBUG) {
@@ -345,6 +358,7 @@ public abstract class BaseAllocator extends Accountant implements BufferAllocato
             childAllocator.name);
       }
     }
+    this.listener.onChildAdded(this, childAllocator);
 
     return childAllocator;
   }
@@ -471,12 +485,10 @@ public abstract class BaseAllocator extends Accountant implements BufferAllocato
 
   /**
    * Verifies the accounting state of the allocator. Only works for DEBUG.
-   * <p>
-   * <p>
-   * This overload is used for recursive calls, allowing for checking that ArrowBufs are unique
+   *
+   * <p>This overload is used for recursive calls, allowing for checking that ArrowBufs are unique
    * across all allocators
    * that are checked.
-   * </p>
    *
    * @param buffersSeen a map of buffers that have already been seen when walking a tree of
    *                    allocators
@@ -517,8 +529,8 @@ public abstract class BaseAllocator extends Accountant implements BufferAllocato
         }
         logger.debug("allocator[" + name + "] child event logs END");
         throw new IllegalStateException(
-            "Child allocators own more memory (" + childTotal + ") than their parent (name = "
-                + name + " ) has allocated (" + getAllocatedMemory() + ')');
+            "Child allocators own more memory (" + childTotal + ") than their parent (name = " +
+                name + " ) has allocated (" + getAllocatedMemory() + ')');
       }
 
       // Furthermore, the amount I've allocated should be that plus buffers I've allocated.
@@ -599,14 +611,12 @@ public abstract class BaseAllocator extends Accountant implements BufferAllocato
 
         if (allocated2 != allocated) {
           throw new IllegalStateException(String.format(
-              "allocator[%s]: allocated t1 (%d) + allocated t2 (%d). Someone released memory " +
-                  "while in verification.",
+              "allocator[%s]: allocated t1 (%d) + allocated t2 (%d). Someone released memory while in verification.",
               name, allocated, allocated2));
 
         }
         throw new IllegalStateException(String.format(
-            "allocator[%s]: buffer space (%d) + prealloc space (%d) + child space (%d) != " +
-                "allocated (%d)",
+            "allocator[%s]: buffer space (%d) + prealloc space (%d) + child space (%d) != allocated (%d)",
             name, bufferTotal, reservedTotal, childTotal, allocated));
       }
     }
@@ -705,10 +715,8 @@ public abstract class BaseAllocator extends Accountant implements BufferAllocato
       assertOpen();
 
       Preconditions.checkArgument(nBytes >= 0, "nBytes(%d) < 0", nBytes);
-      Preconditions.checkState(!closed, "Attempt to increase reservation after reservation has " +
-          "been closed");
-      Preconditions.checkState(!used, "Attempt to increase reservation after reservation has been" +
-          " used");
+      Preconditions.checkState(!closed, "Attempt to increase reservation after reservation has been closed");
+      Preconditions.checkState(!used, "Attempt to increase reservation after reservation has been used");
 
       // we round up to next power of two since all reservations are done in powers of two. This
       // may overestimate the
@@ -772,9 +780,8 @@ public abstract class BaseAllocator extends Accountant implements BufferAllocato
             final StringBuilder sb = new StringBuilder();
             print(sb, 0, Verbosity.LOG_WITH_STACKTRACE);
             logger.debug(sb.toString());
-            throw new IllegalStateException(
-                String.format("Didn't find closing reservation[%d]", System.identityHashCode
-                    (this)));
+            throw new IllegalStateException(String.format("Didn't find closing reservation[%d]",
+                System.identityHashCode(this)));
           }
 
           historicalLog.recordEvent("closed");
@@ -803,9 +810,8 @@ public abstract class BaseAllocator extends Accountant implements BufferAllocato
 
     /**
      * Allocate a buffer of the requested size.
-     * <p>
-     * <p>
-     * The implementation of the allocator's inner class provides this.
+     *
+     * <p>The implementation of the allocator's inner class provides this.
      *
      * @param nBytes the size of the buffer requested
      * @return the buffer, or null, if the request cannot be satisfied

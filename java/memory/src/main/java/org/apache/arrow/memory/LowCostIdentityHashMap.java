@@ -1,32 +1,34 @@
 /*
- *  Licensed to the Apache Software Foundation (ASF) under one or more
- *  contributor license agreements.  See the NOTICE file distributed with
- *  this work for additional information regarding copyright ownership.
- *  The ASF licenses this file to You under the Apache License, Version 2.0
- *  (the "License"); you may not use this file except in compliance with
- *  the License.  You may obtain a copy of the License at
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.apache.arrow.memory;
 
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Preconditions;
+import org.apache.arrow.util.Preconditions;
+import org.apache.arrow.util.VisibleForTesting;
 
 /**
  * Highly specialized IdentityHashMap that implements only partial
- * Map APIs
- * It incurs low initial cost (just two elements by default)
+ * Map APIs.
+ * It incurs low initial cost (just two elements by default).
  * It assumes Value includes the Key - Implements @ValueWithKeyIncluded iface
- * that provides "getKey" method
- * @param <V>
+ * that provides "getKey" method.
+ *
+ * @param <K> Key type
+ * @param <V> Value type
  */
 public class LowCostIdentityHashMap<K, V extends ValueWithKeyIncluded<K>> {
 
@@ -47,7 +49,7 @@ public class LowCostIdentityHashMap<K, V extends ValueWithKeyIncluded<K>> {
   private static final int DEFAULT_MIN_SIZE = 1;
 
   /* Default load factor of 0.75; */
-  private static final int loadFactor = 7500;
+  private static final int LOAD_FACTOR = 7500;
 
   /**
    * Creates an Map with default expected maximum size.
@@ -80,14 +82,14 @@ public class LowCostIdentityHashMap<K, V extends ValueWithKeyIncluded<K>> {
   }
 
   private int computeElementArraySize() {
-    int arraySize = (int) (((long) threshold * 10000) / loadFactor);
+    int arraySize = (int) (((long) threshold * 10000) / LOAD_FACTOR);
     // ensure arraySize is positive, the above cast from long to int type
     // leads to overflow and negative arraySize if threshold is too big
     return arraySize < 0 ? -arraySize : arraySize;
   }
 
   /**
-   * Create a new element array
+   * Create a new element array.
    *
    * @param s
    *            the number of elements
@@ -147,8 +149,7 @@ public class LowCostIdentityHashMap<K, V extends ValueWithKeyIncluded<K>> {
   /**
    * Returns the value of the mapping with the specified key.
    *
-   * @param key
-   *            the key.
+   * @param key the key.
    * @return the value of the mapping with the specified key.
    */
   public V get(K key) {
@@ -177,7 +178,7 @@ public class LowCostIdentityHashMap<K, V extends ValueWithKeyIncluded<K>> {
          */
         break;
       }
-      index = (index+1) % length;
+      index = (index + 1) % length;
     }
     return index;
   }
@@ -190,24 +191,22 @@ public class LowCostIdentityHashMap<K, V extends ValueWithKeyIncluded<K>> {
   /**
    * Maps the specified key to the specified value.
    *
-   * @param value
-   *            the value.
+   * @param value the value.
    * @return the value of any previous mapping with the specified key or
    *         {@code null} if there was no such mapping.
    */
   public V put(V value) {
     Preconditions.checkNotNull(value);
-    K _key = value.getKey();
-    Preconditions.checkNotNull(_key);
-    V _value = value;
+    K key = value.getKey();
+    Preconditions.checkNotNull(key);
 
-    int index = findIndex(_key, elementData);
+    int index = findIndex(key, elementData);
 
     // if the key doesn't exist in the table
-    if (elementData[index] == null || ((V)elementData[index]).getKey() != _key) {
+    if (elementData[index] == null || ((V)elementData[index]).getKey() != key) {
       if (++size > threshold) {
         rehash();
-        index = findIndex(_key, elementData);
+        index = findIndex(key, elementData);
       }
 
       // insert the key and assign the value to null initially
@@ -216,7 +215,7 @@ public class LowCostIdentityHashMap<K, V extends ValueWithKeyIncluded<K>> {
 
     // insert value to where it needs to go, return the old value
     Object result = elementData[index];
-    elementData[index] = _value;
+    elementData[index] = value;
 
     return (V) result;
   }
@@ -241,14 +240,13 @@ public class LowCostIdentityHashMap<K, V extends ValueWithKeyIncluded<K>> {
   }
 
   private void computeMaxSize() {
-    threshold = (int) ((long) (elementData.length) * loadFactor / 10000);
+    threshold = (int) ((long) (elementData.length) * LOAD_FACTOR / 10000);
   }
 
   /**
    * Removes the mapping with the specified key from this map.
    *
-   * @param key
-   *            the key of the mapping to remove.
+   * @param key the key of the mapping to remove.
    * @return the value of the removed mapping, or {@code null} if no mapping
    *         for the specified key was found.
    */
@@ -256,8 +254,11 @@ public class LowCostIdentityHashMap<K, V extends ValueWithKeyIncluded<K>> {
     Preconditions.checkNotNull(key);
 
     boolean hashedOk;
-    int index, next, hash;
-    Object result, object;
+    int index;
+    int next;
+    int hash;
+    Object result;
+    Object object;
     index = next = findIndex(key, elementData);
 
     if (elementData[index] == null || ((V)elementData[index]).getKey() != key) {
@@ -320,7 +321,8 @@ public class LowCostIdentityHashMap<K, V extends ValueWithKeyIncluded<K>> {
   }
 
   /**
-   * Special API to return next value - substitute of regular Map.values.iterator().next()
+   * Special API to return next value - substitute of regular Map.values.iterator().next().
+   *
    * @return next available value or null if none available
    */
   public V getNextValue() {

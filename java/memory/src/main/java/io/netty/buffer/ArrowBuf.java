@@ -1,14 +1,13 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- * <p>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -38,8 +37,7 @@ import org.apache.arrow.memory.BoundsChecking;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.BufferManager;
 import org.apache.arrow.memory.util.HistoricalLog;
-
-import com.google.common.base.Preconditions;
+import org.apache.arrow.util.Preconditions;
 
 import io.netty.util.internal.PlatformDependent;
 
@@ -143,8 +141,8 @@ public final class ArrowBuf extends AbstractByteBuf implements AutoCloseable {
 
   /**
    * Allows a function to determine whether not reading a particular string of bytes is valid.
-   * <p>
-   * Will throw an exception if the memory is not readable for some reason. Only doesn't
+   *
+   * <p>Will throw an exception if the memory is not readable for some reason. Only doesn't
    * something in the case that
    * AssertionUtil.BOUNDS_CHECKING_ENABLED is true.
    *
@@ -175,8 +173,8 @@ public final class ArrowBuf extends AbstractByteBuf implements AutoCloseable {
    * accounting. This has no impact on the reference counting for the current ArrowBuf except in
    * the situation where the
    * passed in Allocator is the same as the current buffer.
-   * <p>
-   * This operation has no impact on the reference count of this ArrowBuf. The newly created
+   *
+   * <p>This operation has no impact on the reference count of this ArrowBuf. The newly created
    * ArrowBuf with either have a
    * reference count of 1 (in the case that this is the first time this memory is being
    * associated with the new
@@ -213,16 +211,16 @@ public final class ArrowBuf extends AbstractByteBuf implements AutoCloseable {
    * this ArrowBuf does not currently own the memory underlying it (and is only associated with
    * it), this does not
    * transfer any ownership to the newly created ArrowBuf.
-   * <p>
-   * This operation has no impact on the reference count of this ArrowBuf. The newly created
+   *
+   * <p>This operation has no impact on the reference count of this ArrowBuf. The newly created
    * ArrowBuf with either have a
    * reference count of 1 (in the case that this is the first time this memory is being
    * associated with the new
    * allocator) or the current value of the reference count for the other
    * AllocationManager/BufferLedger combination in
    * the case that the provided allocator already had an association to this underlying memory.
-   * <p>
-   * Transfers will always succeed, even if that puts the other allocator into an overlimit
+   *
+   * <p>Transfers will always succeed, even if that puts the other allocator into an overlimit
    * situation. This is possible
    * due to the fact that the original owning allocator may have allocated this memory out of a
    * local reservation
@@ -236,7 +234,7 @@ public final class ArrowBuf extends AbstractByteBuf implements AutoCloseable {
    *
    * @param target The allocator to transfer ownership to.
    * @return A new transfer result with the impact of the transfer (whether it was overlimit) as
-   * well as the newly created ArrowBuf.
+   *         well as the newly created ArrowBuf.
    */
   public TransferResult transferOwnership(BufferAllocator target) {
 
@@ -267,8 +265,7 @@ public final class ArrowBuf extends AbstractByteBuf implements AutoCloseable {
     }
 
     if (decrement < 1) {
-      throw new IllegalStateException(String.format("release(%d) argument is not positive. Buffer" +
-              " Info: %s",
+      throw new IllegalStateException(String.format("release(%d) argument is not positive. Buffer Info: %s",
           decrement, toVerboseString()));
     }
 
@@ -307,8 +304,7 @@ public final class ArrowBuf extends AbstractByteBuf implements AutoCloseable {
       return this;
     }
 
-    throw new UnsupportedOperationException("Buffers don't support resizing that increases the " +
-        "size.");
+    throw new UnsupportedOperationException("Buffers don't support resizing that increases the size.");
   }
 
   @Override
@@ -442,8 +438,7 @@ public final class ArrowBuf extends AbstractByteBuf implements AutoCloseable {
 
   @Override
   public String toString() {
-    return String.format("ArrowBuf[%d], udle: [%d %d..%d]", id, udle.id, offset, offset +
-        capacity());
+    return String.format("ArrowBuf[%d], udle: [%d %d..%d]", id, udle.id, offset, offset + capacity());
   }
 
   @Override
@@ -795,7 +790,9 @@ public final class ArrowBuf extends AbstractByteBuf implements AutoCloseable {
     return getShort(index);
   }
 
-  /** @see  {@link #getShortLE(int)} */
+  /**
+   * @see ArrowBuf#getShortLE(int).
+   */
   @Override
   protected short _getShortLE(int index) {
     return getShortLE(index);
@@ -806,19 +803,25 @@ public final class ArrowBuf extends AbstractByteBuf implements AutoCloseable {
     return getInt(index);
   }
 
-  /** @see  {@link #getIntLE(int)} */
+  /**
+   * @see ArrowBuf#getIntLE(int).
+   */
   @Override
   protected int _getIntLE(int index) {
     return getIntLE(index);
   }
 
-  /** @see  {@link #getUnsignedMedium(int)} */
+  /**
+   * @see ArrowBuf#getUnsignedMedium(int).
+   */
   @Override
   protected int _getUnsignedMedium(int index) {
     return getUnsignedMedium(index);
   }
 
-  /** @see  {@link #getUnsignedMediumLE(int)} */
+  /**
+   * @see ArrowBuf#getUnsignedMediumLE(int).
+   */
   @Override
   protected int _getUnsignedMediumLE(int index) {
     return getUnsignedMediumLE(index);
@@ -829,7 +832,9 @@ public final class ArrowBuf extends AbstractByteBuf implements AutoCloseable {
     return getLong(index);
   }
 
-  /** @see  {@link #getLongLE(int)} */
+  /**
+   * @see ArrowBuf#getLongLE(int).
+   */
   @Override
   protected long _getLongLE(int index) {
     return getLongLE(index);
@@ -845,7 +850,9 @@ public final class ArrowBuf extends AbstractByteBuf implements AutoCloseable {
     setShort(index, value);
   }
 
-  /** @see  {@link #setShortLE(int, int)} */
+  /**
+   * @see ArrowBuf#setShortLE(int, int).
+   */
   @Override
   protected void _setShortLE(int index, int value) {
     setShortLE(index, value);
@@ -856,7 +863,9 @@ public final class ArrowBuf extends AbstractByteBuf implements AutoCloseable {
     setMedium(index, value);
   }
 
-  /** @see  {@link #setMediumLE(int, int)} */
+  /**
+   * @see ArrowBuf#setMediumLE(int, int).
+   */
   @Override
   protected void _setMediumLE(int index, int value) {
     setMediumLE(index, value);
@@ -867,7 +876,9 @@ public final class ArrowBuf extends AbstractByteBuf implements AutoCloseable {
     setInt(index, value);
   }
 
-  /** @see  {@link #setIntLE(int, int)} */
+  /**
+   * @see ArrowBuf#setIntLE(int, int).
+   */
   @Override
   protected void _setIntLE(int index, int value) {
     setIntLE(index, value);
@@ -878,7 +889,9 @@ public final class ArrowBuf extends AbstractByteBuf implements AutoCloseable {
     setLong(index, value);
   }
 
-  /** @see  {@link #setLongLE(int, long)} */
+  /**
+   * @see ArrowBuf#setLongLE(int, long).
+   */
   @Override
   public void _setLongLE(int index, long value) {
     setLongLE(index, value);

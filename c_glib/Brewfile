@@ -16,13 +16,17 @@
 # under the License.
 
 brew "autoconf-archive"
-brew "boost", args: ["1.66.0"]
+brew "automake"
+brew "boost"
 brew "ccache"
 brew "cmake"
 brew "git"
 brew "gobject-introspection"
 brew "gtk-doc"
-brew "jemalloc"
 brew "libtool"
+brew "llvm@7"
 brew "lua"
+brew "luarocks"
+brew "ninja"
+brew "thrift"
 brew "wget"

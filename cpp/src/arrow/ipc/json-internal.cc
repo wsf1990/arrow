@@ -23,22 +23,31 @@
 #include <sstream>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "arrow/array.h"
-#include "arrow/builder.h"
+#include "arrow/buffer.h"
+#include "arrow/builder.h"  // IWYU pragma: keep
 #include "arrow/ipc/dictionary.h"
 #include "arrow/record_batch.h"
 #include "arrow/status.h"
 #include "arrow/type.h"
 #include "arrow/type_traits.h"
 #include "arrow/util/bit-util.h"
+#include "arrow/util/checked_cast.h"
 #include "arrow/util/decimal.h"
 #include "arrow/util/logging.h"
 #include "arrow/util/string.h"
 #include "arrow/visitor_inline.h"
 
 namespace arrow {
+
+class MemoryPool;
+
+using internal::checked_cast;
+
 namespace ipc {
 namespace internal {
 namespace json {
@@ -157,7 +166,7 @@ class SchemaWriter {
     writer_->EndObject();
 
     if (type.id() == Type::DICTIONARY) {
-      const auto& dict_type = static_cast<const DictionaryType&>(type);
+      const auto& dict_type = checked_cast<const DictionaryType&>(type);
       RETURN_NOT_OK(WriteDictionaryMetadata(dict_type));
 
       const DataType& dictionary_type = *dict_type.dictionary()->type();
@@ -371,27 +380,42 @@ class ArrayWriter {
   template <typename T>
   typename std::enable_if<IsSignedInt<T>::value, void>::type WriteDataValues(
       const T& arr) {
+    static const char null_string[] = "0";
     const auto data = arr.raw_values();
-    for (int i = 0; i < arr.length(); ++i) {
-      writer_->Int64(data[i]);
+    for (int64_t i = 0; i < arr.length(); ++i) {
+      if (arr.IsValid(i)) {
+        writer_->Int64(data[i]);
+      } else {
+        writer_->RawNumber(null_string, sizeof(null_string));
+      }
     }
   }
 
   template <typename T>
   typename std::enable_if<IsUnsignedInt<T>::value, void>::type WriteDataValues(
       const T& arr) {
+    static const char null_string[] = "0";
     const auto data = arr.raw_values();
-    for (int i = 0; i < arr.length(); ++i) {
-      writer_->Uint64(data[i]);
+    for (int64_t i = 0; i < arr.length(); ++i) {
+      if (arr.IsValid(i)) {
+        writer_->Uint64(data[i]);
+      } else {
+        writer_->RawNumber(null_string, sizeof(null_string));
+      }
     }
   }
 
   template <typename T>
   typename std::enable_if<IsFloatingPoint<T>::value, void>::type WriteDataValues(
       const T& arr) {
+    static const char null_string[] = "0.";
     const auto data = arr.raw_values();
-    for (int i = 0; i < arr.length(); ++i) {
-      writer_->Double(data[i]);
+    for (int64_t i = 0; i < arr.length(); ++i) {
+      if (arr.IsValid(i)) {
+        writer_->Double(data[i]);
+      } else {
+        writer_->RawNumber(null_string, sizeof(null_string));
+      }
     }
   }
 
@@ -423,15 +447,24 @@ class ArrayWriter {
   }
 
   void WriteDataValues(const Decimal128Array& arr) {
+    static const char null_string[] = "0";
     for (int64_t i = 0; i < arr.length(); ++i) {
-      const Decimal128 value(arr.GetValue(i));
-      writer_->String(value.ToIntegerString());
+      if (arr.IsValid(i)) {
+        const Decimal128 value(arr.GetValue(i));
+        writer_->String(value.ToIntegerString());
+      } else {
+        writer_->String(null_string, sizeof(null_string));
+      }
     }
   }
 
   void WriteDataValues(const BooleanArray& arr) {
-    for (int i = 0; i < arr.length(); ++i) {
-      writer_->Bool(arr.Value(i));
+    for (int64_t i = 0; i < arr.length(); ++i) {
+      if (arr.IsValid(i)) {
+        writer_->Bool(arr.Value(i));
+      } else {
+        writer_->Bool(false);
+      }
     }
   }
 
@@ -516,13 +549,13 @@ class ArrayWriter {
   Status Visit(const ListArray& array) {
     WriteValidityField(array);
     WriteIntegerField("OFFSET", array.raw_value_offsets(), array.length() + 1);
-    const auto& type = static_cast<const ListType&>(*array.type());
+    const auto& type = checked_cast<const ListType&>(*array.type());
     return WriteChildren(type.children(), {array.values()});
   }
 
   Status Visit(const StructArray& array) {
     WriteValidityField(array);
-    const auto& type = static_cast<const StructType&>(*array.type());
+    const auto& type = checked_cast<const StructType&>(*array.type());
     std::vector<std::shared_ptr<Array>> children;
     children.reserve(array.num_fields());
     for (int i = 0; i < array.num_fields(); ++i) {
@@ -533,7 +566,7 @@ class ArrayWriter {
 
   Status Visit(const UnionArray& array) {
     WriteValidityField(array);
-    const auto& type = static_cast<const UnionType&>(*array.type());
+    const auto& type = checked_cast<const UnionType&>(*array.type());
 
     WriteIntegerField("TYPE_ID", array.raw_type_ids(), array.length());
     if (type.mode() == UnionMode::DENSE) {
@@ -600,9 +633,7 @@ static Status GetInteger(const rj::Value::ConstObject& json_type,
       *type = is_signed ? int64() : uint64();
       break;
     default:
-      std::stringstream ss;
-      ss << "Invalid bit width: " << bit_width;
-      return Status::Invalid(ss.str());
+      return Status::Invalid("Invalid bit width: ", bit_width);
   }
   return Status::OK();
 }
@@ -621,9 +652,7 @@ static Status GetFloatingPoint(const RjObject& json_type,
   } else if (precision == "HALF") {
     *type = float16();
   } else {
-    std::stringstream ss;
-    ss << "Invalid precision: " << precision;
-    return Status::Invalid(ss.str());
+    return Status::Invalid("Invalid precision: ", precision);
   }
   return Status::OK();
 }
@@ -660,9 +689,7 @@ static Status GetDate(const RjObject& json_type, std::shared_ptr<DataType>* type
   } else if (unit_str == "MILLISECOND") {
     *type = date64();
   } else {
-    std::stringstream ss;
-    ss << "Invalid date unit: " << unit_str;
-    return Status::Invalid(ss.str());
+    return Status::Invalid("Invalid date unit: ", unit_str);
   }
   return Status::OK();
 }
@@ -685,12 +712,10 @@ static Status GetTime(const RjObject& json_type, std::shared_ptr<DataType>* type
   } else if (unit_str == "NANOSECOND") {
     *type = time64(TimeUnit::NANO);
   } else {
-    std::stringstream ss;
-    ss << "Invalid time unit: " << unit_str;
-    return Status::Invalid(ss.str());
+    return Status::Invalid("Invalid time unit: ", unit_str);
   }
 
-  const auto& fw_type = static_cast<const FixedWidthType&>(**type);
+  const auto& fw_type = checked_cast<const FixedWidthType&>(**type);
 
   int bit_width = it_bit_width->value.GetInt();
   if (bit_width != fw_type.bit_width()) {
@@ -716,9 +741,7 @@ static Status GetTimestamp(const RjObject& json_type, std::shared_ptr<DataType>*
   } else if (unit_str == "NANOSECOND") {
     unit = TimeUnit::NANO;
   } else {
-    std::stringstream ss;
-    ss << "Invalid time unit: " << unit_str;
-    return Status::Invalid(ss.str());
+    return Status::Invalid("Invalid time unit: ", unit_str);
   }
 
   const auto& it_tz = json_type.FindMember("timezone");
@@ -745,9 +768,7 @@ static Status GetUnion(const RjObject& json_type,
   } else if (mode_str == "DENSE") {
     mode = UnionMode::DENSE;
   } else {
-    std::stringstream ss;
-    ss << "Invalid union mode: " << mode_str;
-    return Status::Invalid(ss.str());
+    return Status::Invalid("Invalid union mode: ", mode_str);
   }
 
   const auto& it_type_codes = json_type.FindMember("typeIds");
@@ -805,9 +826,7 @@ static Status GetType(const RjObject& json_type,
   } else if (type_name == "union") {
     return GetUnion(json_type, children, type);
   } else {
-    std::stringstream ss;
-    ss << "Unrecognized type name: " << type_name;
-    return Status::Invalid(ss.str());
+    return Status::Invalid("Unrecognized type name: ", type_name);
   }
   return Status::OK();
 }
@@ -936,7 +955,7 @@ class ArrayReader {
     int length = static_cast<int>(is_valid.size());
 
     std::shared_ptr<Buffer> out_buffer;
-    RETURN_NOT_OK(GetEmptyBitmap(pool_, length, &out_buffer));
+    RETURN_NOT_OK(AllocateEmptyBitmap(pool_, length, &out_buffer));
     uint8_t* bitmap = out_buffer->mutable_data();
 
     *null_count = 0;
@@ -992,7 +1011,6 @@ class ArrayReader {
 
     DCHECK_EQ(static_cast<int32_t>(json_data_arr.Size()), length_);
 
-    auto byte_buffer = std::make_shared<PoolBuffer>(pool_);
     for (int i = 0; i < length_; ++i) {
       if (!is_valid_[i]) {
         RETURN_NOT_OK(builder.AppendNull());
@@ -1009,9 +1027,8 @@ class ArrayReader {
         DCHECK(hex_string.size() % 2 == 0) << "Expected base16 hex string";
         int32_t length = static_cast<int>(hex_string.size()) / 2;
 
-        if (byte_buffer->size() < length) {
-          RETURN_NOT_OK(byte_buffer->Resize(length));
-        }
+        std::shared_ptr<Buffer> byte_buffer;
+        RETURN_NOT_OK(AllocateBuffer(pool_, length, &byte_buffer));
 
         const char* hex_data = hex_string.c_str();
         uint8_t* byte_buffer_data = byte_buffer->mutable_data();
@@ -1204,10 +1221,8 @@ class ArrayReader {
     const auto& json_children_arr = json_children->value.GetArray();
 
     if (type.num_children() != static_cast<int>(json_children_arr.Size())) {
-      std::stringstream ss;
-      ss << "Expected " << type.num_children() << " children, but got "
-         << json_children_arr.Size();
-      return Status::Invalid(ss.str());
+      return Status::Invalid("Expected ", type.num_children(), " children, but got ",
+                             json_children_arr.Size());
     }
 
     for (int i = 0; i < static_cast<int>(json_children_arr.Size()); ++i) {
@@ -1311,9 +1326,7 @@ static Status ReadDictionary(const RjObject& obj, const DictionaryTypeMap& id_to
 
   auto it = id_to_field.find(id);
   if (it == id_to_field.end()) {
-    std::stringstream ss;
-    ss << "No dictionary with id " << id;
-    return Status::Invalid(ss.str());
+    return Status::Invalid("No dictionary with id ", id);
   }
   std::vector<std::shared_ptr<Field>> fields = {it->second};
 
@@ -1458,9 +1471,7 @@ Status ReadArray(MemoryPool* pool, const rj::Value& json_array, const Schema& sc
   }
 
   if (result == nullptr) {
-    std::stringstream ss;
-    ss << "Field named " << name << " not found in schema";
-    return Status::KeyError(ss.str());
+    return Status::KeyError("Field named ", name, " not found in schema");
   }
 
   return ReadArray(pool, json_array, result->type(), array);

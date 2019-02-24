@@ -31,20 +31,21 @@
 #include "arrow/buffer.h"
 #include "arrow/io/interfaces.h"
 #include "arrow/io/memory.h"
-#include "arrow/ipc/File_generated.h"
+#include "arrow/ipc/File_generated.h"  // IWYU pragma: export
 #include "arrow/ipc/Message_generated.h"
 #include "arrow/ipc/Schema_generated.h"
 #include "arrow/ipc/dictionary.h"
 #include "arrow/ipc/message.h"
 #include "arrow/ipc/metadata-internal.h"
-#include "arrow/ipc/util.h"
 #include "arrow/record_batch.h"
+#include "arrow/sparse_tensor.h"
 #include "arrow/status.h"
 #include "arrow/tensor.h"
 #include "arrow/type.h"
-#include "arrow/util/bit-util.h"
 #include "arrow/util/logging.h"
 #include "arrow/visitor_inline.h"
+
+using arrow::internal::checked_pointer_cast;
 
 namespace arrow {
 
@@ -227,9 +228,7 @@ class ArrayLoader {
 
     const int num_children = type.num_children();
     if (num_children != 1) {
-      std::stringstream ss;
-      ss << "Wrong number of children: " << num_children;
-      return Status::Invalid(ss.str());
+      return Status::Invalid("Wrong number of children: ", num_children);
     }
 
     return LoadChildren(type.children());
@@ -328,6 +327,9 @@ Status ReadRecordBatch(const Buffer& metadata, const std::shared_ptr<Schema>& sc
   if (message->header_type() != flatbuf::MessageHeader_RecordBatch) {
     DCHECK_EQ(message->header_type(), flatbuf::MessageHeader_RecordBatch);
   }
+  if (message->header() == nullptr) {
+    return Status::IOError("Header-pointer of flatbuffer-encoded Message is null.");
+  }
   auto batch = reinterpret_cast<const flatbuf::RecordBatch*>(message->header());
   return ReadRecordBatch(batch, schema, max_recursion_depth, file, out);
 }
@@ -342,9 +344,7 @@ Status ReadDictionary(const Buffer& metadata, const DictionaryTypeMap& dictionar
   int64_t id = *dictionary_id = dictionary_batch->id();
   auto it = dictionary_types.find(id);
   if (it == dictionary_types.end()) {
-    std::stringstream ss;
-    ss << "Do not have type metadata for dictionary with id: " << id;
-    return Status::KeyError(ss.str());
+    return Status::KeyError("Do not have type metadata for dictionary with id: ", id);
   }
 
   std::vector<std::shared_ptr<Field>> fields = {it->second};
@@ -371,10 +371,8 @@ static Status ReadMessageAndValidate(MessageReader* reader, Message::Type expect
   RETURN_NOT_OK(reader->ReadNextMessage(message));
 
   if (!(*message) && !allow_null) {
-    std::stringstream ss;
-    ss << "Expected " << FormatMessageType(expected_type)
-       << " message in stream, was null or length 0";
-    return Status::Invalid(ss.str());
+    return Status::Invalid("Expected ", FormatMessageType(expected_type),
+                           " message in stream, was null or length 0");
   }
 
   if ((*message) == nullptr) {
@@ -382,10 +380,9 @@ static Status ReadMessageAndValidate(MessageReader* reader, Message::Type expect
   }
 
   if ((*message)->type() != expected_type) {
-    std::stringstream ss;
-    ss << "Message not expected type: " << FormatMessageType(expected_type)
-       << ", was: " << (*message)->type();
-    return Status::IOError(ss.str());
+    return Status::IOError(
+        "Message not expected type: ", FormatMessageType(expected_type),
+        ", was: ", (*message)->type());
   }
   return Status::OK();
 }
@@ -426,6 +423,9 @@ class RecordBatchStreamReader::RecordBatchStreamReaderImpl {
     RETURN_NOT_OK(
         ReadMessageAndValidate(message_reader_.get(), Message::SCHEMA, false, &message));
 
+    if (message->header() == nullptr) {
+      return Status::IOError("Header-pointer of flatbuffer-encoded Message is null.");
+    }
     RETURN_NOT_OK(internal::GetDictionaryTypes(message->header(), &dictionary_types_));
 
     // TODO(wesm): In future, we may want to reconcile the ids in the stream with
@@ -502,15 +502,15 @@ Status RecordBatchStreamReader::ReadNext(std::shared_ptr<RecordBatch>* batch) {
 
 class RecordBatchFileReader::RecordBatchFileReaderImpl {
  public:
-  RecordBatchFileReaderImpl() { dictionary_memo_ = std::make_shared<DictionaryMemo>(); }
+  RecordBatchFileReaderImpl() : file_(NULLPTR), footer_offset_(0), footer_(NULLPTR) {
+    dictionary_memo_ = std::make_shared<DictionaryMemo>();
+  }
 
   Status ReadFooter() {
     int magic_size = static_cast<int>(strlen(kArrowMagicBytes));
 
     if (footer_offset_ <= magic_size * 2 + 4) {
-      std::stringstream ss;
-      ss << "File is too small: " << footer_offset_;
-      return Status::Invalid(ss.str());
+      return Status::Invalid("File is too small: ", footer_offset_);
     }
 
     std::shared_ptr<Buffer> buffer;
@@ -519,9 +519,7 @@ class RecordBatchFileReader::RecordBatchFileReaderImpl {
 
     const int64_t expected_footer_size = magic_size + sizeof(int32_t);
     if (buffer->size() < expected_footer_size) {
-      std::stringstream ss;
-      ss << "Unable to read " << expected_footer_size << "from end of file";
-      return Status::Invalid(ss.str());
+      return Status::Invalid("Unable to read ", expected_footer_size, "from end of file");
     }
 
     if (memcmp(buffer->data() + sizeof(int32_t), kArrowMagicBytes, magic_size)) {
@@ -572,6 +570,9 @@ class RecordBatchFileReader::RecordBatchFileReaderImpl {
     std::unique_ptr<Message> message;
     RETURN_NOT_OK(ReadMessage(block.offset, block.metadata_length, file_, &message));
 
+    // TODO(wesm): this breaks integration tests, see ARROW-3256
+    // DCHECK_EQ(message->body_length(), block.body_length);
+
     io::BufferReader reader(message->body());
     return ::arrow::ipc::ReadRecordBatch(*message->metadata(), schema_, &reader, batch);
   }
@@ -589,6 +590,9 @@ class RecordBatchFileReader::RecordBatchFileReaderImpl {
 
       std::unique_ptr<Message> message;
       RETURN_NOT_OK(ReadMessage(block.offset, block.metadata_length, file_, &message));
+
+      // TODO(wesm): this breaks integration tests, see ARROW-3256
+      // DCHECK_EQ(message->body_length(), block.body_length);
 
       io::BufferReader reader(message->body());
 
@@ -684,9 +688,8 @@ Status RecordBatchFileReader::ReadRecordBatch(int i,
 }
 
 static Status ReadContiguousPayload(io::InputStream* file,
-                                    std::unique_ptr<Message>* message,
-                                    bool aligned = false) {
-  RETURN_NOT_OK(ReadMessage(file, message, aligned));
+                                    std::unique_ptr<Message>* message) {
+  RETURN_NOT_OK(ReadMessage(file, message));
   if (*message == nullptr) {
     return Status::Invalid("Unable to read metadata at offset");
   }
@@ -700,6 +703,12 @@ Status ReadSchema(io::InputStream* stream, std::shared_ptr<Schema>* out) {
   return Status::OK();
 }
 
+Status ReadSchema(const Message& message, std::shared_ptr<Schema>* out) {
+  std::shared_ptr<RecordBatchReader> reader;
+  DictionaryMemo dictionary_memo;
+  return internal::GetSchema(message.header(), dictionary_memo, &*out);
+}
+
 Status ReadRecordBatch(const std::shared_ptr<Schema>& schema, io::InputStream* file,
                        std::shared_ptr<RecordBatch>* out) {
   std::unique_ptr<Message> message;
@@ -709,14 +718,9 @@ Status ReadRecordBatch(const std::shared_ptr<Schema>& schema, io::InputStream* f
                          out);
 }
 
-Status ReadTensor(int64_t offset, io::RandomAccessFile* file,
-                  std::shared_ptr<Tensor>* out) {
-  // Respect alignment of Tensor messages (see WriteTensor)
-  offset = PaddedLength(offset);
-  RETURN_NOT_OK(file->Seek(offset));
-
+Status ReadTensor(io::InputStream* file, std::shared_ptr<Tensor>* out) {
   std::unique_ptr<Message> message;
-  RETURN_NOT_OK(ReadContiguousPayload(file, &message, true /* aligned */));
+  RETURN_NOT_OK(ReadContiguousPayload(file, &message));
   return ReadTensor(*message, out);
 }
 
@@ -729,6 +733,124 @@ Status ReadTensor(const Message& message, std::shared_ptr<Tensor>* out) {
                                             &dim_names));
   *out = std::make_shared<Tensor>(type, message.body(), shape, strides, dim_names);
   return Status::OK();
+}
+
+namespace {
+
+Status ReadSparseCOOIndex(const flatbuf::SparseTensor* sparse_tensor, int64_t ndim,
+                          int64_t non_zero_length, io::RandomAccessFile* file,
+                          std::shared_ptr<SparseIndex>* out) {
+  auto* sparse_index = sparse_tensor->sparseIndex_as_SparseTensorIndexCOO();
+  auto* indices_buffer = sparse_index->indicesBuffer();
+  std::shared_ptr<Buffer> indices_data;
+  RETURN_NOT_OK(
+      file->ReadAt(indices_buffer->offset(), indices_buffer->length(), &indices_data));
+  std::vector<int64_t> shape({non_zero_length, ndim});
+  const int64_t elsize = sizeof(int64_t);
+  std::vector<int64_t> strides({elsize, elsize * non_zero_length});
+  *out = std::make_shared<SparseCOOIndex>(
+      std::make_shared<SparseCOOIndex::CoordsTensor>(indices_data, shape, strides));
+  return Status::OK();
+}
+
+Status ReadSparseCSRIndex(const flatbuf::SparseTensor* sparse_tensor, int64_t ndim,
+                          int64_t non_zero_length, io::RandomAccessFile* file,
+                          std::shared_ptr<SparseIndex>* out) {
+  auto* sparse_index = sparse_tensor->sparseIndex_as_SparseMatrixIndexCSR();
+
+  auto* indptr_buffer = sparse_index->indptrBuffer();
+  std::shared_ptr<Buffer> indptr_data;
+  RETURN_NOT_OK(
+      file->ReadAt(indptr_buffer->offset(), indptr_buffer->length(), &indptr_data));
+
+  auto* indices_buffer = sparse_index->indicesBuffer();
+  std::shared_ptr<Buffer> indices_data;
+  RETURN_NOT_OK(
+      file->ReadAt(indices_buffer->offset(), indices_buffer->length(), &indices_data));
+
+  std::vector<int64_t> indptr_shape({ndim + 1});
+  std::vector<int64_t> indices_shape({non_zero_length});
+  *out = std::make_shared<SparseCSRIndex>(
+      std::make_shared<SparseCSRIndex::IndexTensor>(indptr_data, indptr_shape),
+      std::make_shared<SparseCSRIndex::IndexTensor>(indices_data, indices_shape));
+  return Status::OK();
+}
+
+Status MakeSparseTensorWithSparseCOOIndex(
+    const std::shared_ptr<DataType>& type, const std::vector<int64_t>& shape,
+    const std::vector<std::string>& dim_names,
+    const std::shared_ptr<SparseCOOIndex>& sparse_index, int64_t non_zero_length,
+    const std::shared_ptr<Buffer>& data, std::shared_ptr<SparseTensor>* out) {
+  *out = std::make_shared<SparseTensorImpl<SparseCOOIndex>>(sparse_index, type, data,
+                                                            shape, dim_names);
+  return Status::OK();
+}
+
+Status MakeSparseTensorWithSparseCSRIndex(
+    const std::shared_ptr<DataType>& type, const std::vector<int64_t>& shape,
+    const std::vector<std::string>& dim_names,
+    const std::shared_ptr<SparseCSRIndex>& sparse_index, int64_t non_zero_length,
+    const std::shared_ptr<Buffer>& data, std::shared_ptr<SparseTensor>* out) {
+  *out = std::make_shared<SparseTensorImpl<SparseCSRIndex>>(sparse_index, type, data,
+                                                            shape, dim_names);
+  return Status::OK();
+}
+
+}  // namespace
+
+Status ReadSparseTensor(const Buffer& metadata, io::RandomAccessFile* file,
+                        std::shared_ptr<SparseTensor>* out) {
+  std::shared_ptr<DataType> type;
+  std::vector<int64_t> shape;
+  std::vector<std::string> dim_names;
+  int64_t non_zero_length;
+  SparseTensorFormat::type sparse_tensor_format_id;
+
+  RETURN_NOT_OK(internal::GetSparseTensorMetadata(
+      metadata, &type, &shape, &dim_names, &non_zero_length, &sparse_tensor_format_id));
+
+  auto message = flatbuf::GetMessage(metadata.data());
+  auto sparse_tensor = reinterpret_cast<const flatbuf::SparseTensor*>(message->header());
+  const flatbuf::Buffer* buffer = sparse_tensor->data();
+  DCHECK(BitUtil::IsMultipleOf8(buffer->offset()))
+      << "Buffer of sparse index data "
+      << "did not start on 8-byte aligned offset: " << buffer->offset();
+
+  std::shared_ptr<Buffer> data;
+  RETURN_NOT_OK(file->ReadAt(buffer->offset(), buffer->length(), &data));
+
+  std::shared_ptr<SparseIndex> sparse_index;
+  switch (sparse_tensor_format_id) {
+    case SparseTensorFormat::COO:
+      RETURN_NOT_OK(ReadSparseCOOIndex(sparse_tensor, shape.size(), non_zero_length, file,
+                                       &sparse_index));
+      return MakeSparseTensorWithSparseCOOIndex(
+          type, shape, dim_names, checked_pointer_cast<SparseCOOIndex>(sparse_index),
+          non_zero_length, data, out);
+
+    case SparseTensorFormat::CSR:
+      RETURN_NOT_OK(ReadSparseCSRIndex(sparse_tensor, shape.size(), non_zero_length, file,
+                                       &sparse_index));
+      return MakeSparseTensorWithSparseCSRIndex(
+          type, shape, dim_names, checked_pointer_cast<SparseCSRIndex>(sparse_index),
+          non_zero_length, data, out);
+
+    default:
+      return Status::Invalid("Unsupported sparse index format");
+  }
+}
+
+Status ReadSparseTensor(const Message& message, std::shared_ptr<SparseTensor>* out) {
+  io::BufferReader buffer_reader(message.body());
+  return ReadSparseTensor(*message.metadata(), &buffer_reader, out);
+}
+
+Status ReadSparseTensor(io::InputStream* file, std::shared_ptr<SparseTensor>* out) {
+  std::unique_ptr<Message> message;
+  RETURN_NOT_OK(ReadContiguousPayload(file, &message));
+  DCHECK_EQ(message->type(), Message::SPARSE_TENSOR);
+  io::BufferReader buffer_reader(message->body());
+  return ReadSparseTensor(*message->metadata(), &buffer_reader, out);
 }
 
 }  // namespace ipc

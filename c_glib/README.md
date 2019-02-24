@@ -53,7 +53,7 @@ recommended that you use packages.
 Note that the packages are "unofficial". "Official" packages will be
 released in the future.
 
-If you find problems when installing please see [common build problems](https://github.com/apache/arrow/blob/master/c_glib/README.md#common-build-problems).
+We support two build systems, GNU Autotools and Meson. If you find problems when installing please see [common build problems](https://github.com/apache/arrow/blob/master/c_glib/README.md#common-build-problems).
 
 ### Package
 
@@ -64,7 +64,7 @@ See [install document](../site/install.md) for details.
 Arrow GLib users should use released source archive to build Arrow
 GLib (replace the version number in the following commands with the one you use):
 
-```text
+```console
 % wget https://archive.apache.org/dist/arrow/arrow-0.3.0/apache-arrow-0.3.0.tar.gz
 % tar xf apache-arrow-0.3.0.tar.gz
 % cd apache-arrow-0.3.0
@@ -73,13 +73,15 @@ GLib (replace the version number in the following commands with the one you use)
 You need to build and install Arrow C++ before you build and install
 Arrow GLib. See Arrow C++ document about how to install Arrow C++.
 
-You can build and install Arrow GLib after you install Arrow C++.
+If you use macOS with [Homebrew](https://brew.sh/), you must install required packages and set `PKG_CONFIG_PATH` before build Arrow GLib:
 
-If you use macOS with [Homebrew](https://brew.sh/), you must install `gobject-introspection` and set `PKG_CONFIG_PATH` before build Arrow GLib:
+If you use GNU Autotools, you can build and install Arrow GLib by the followings:
 
-```text
+macOS:
+
+```console
 % cd c_glib
-% brew install -y gobject-introspection
+% brew bundle
 % ./configure PKG_CONFIG_PATH=$(brew --prefix libffi)/lib/pkgconfig:$PKG_CONFIG_PATH
 % make
 % sudo make install
@@ -87,11 +89,32 @@ If you use macOS with [Homebrew](https://brew.sh/), you must install `gobject-in
 
 Others:
 
-```text
+```console
 % cd c_glib
 % ./configure
 % make
 % sudo make install
+```
+
+If you use Meson, you can build and install Arrow GLib by the followings:
+
+macOS:
+
+```console
+% cd c_glib
+% brew bundle
+% PKG_CONFIG_PATH=$(brew --prefix libffi)/lib/pkgconfig:$PKG_CONFIG_PATH meson build --buildtype=release
+% ninja -C build
+% sudo ninja -C build install
+```
+
+Others:
+
+```console
+% cd c_glib
+% meson build --buildtype=release
+% ninja -C build
+% sudo ninja -C build install
 ```
 
 ### How to build by developers
@@ -105,30 +128,52 @@ to build Arrow GLib. You can install them by the followings:
 
 On Debian GNU/Linux or Ubuntu:
 
-```text
-% sudo apt install -y -V gtk-doc-tools autoconf-archive libgirepository1.0-dev
+```console
+% sudo apt install -y -V gtk-doc-tools autoconf-archive libgirepository1.0-dev meson ninja-build
 ```
 
 On CentOS 7 or later:
 
-```text
+```console
 % sudo yum install -y gtk-doc gobject-introspection-devel
+% sudo pip install -y meson ninja
 ```
 
 On macOS with [Homebrew](https://brew.sh/):
 
 ```text
-% brew install -y gtk-doc gobject-introspection
+% brew bundle
 ```
 
-Now, you can build Arrow GLib:
+If you use GNU Autotools, you can build and install Arrow GLib by the followings:
 
-```text
+```console
 % cd c_glib
 % ./autogen.sh
 % ./configure --enable-gtk-doc
 % make
 % sudo make install
+```
+
+You need to set `PKG_CONFIG_PATH` to `configure` On macOS:
+
+```console
+% ./configure PKG_CONFIG_PATH=$(brew --prefix libffi)/lib/pkgconfig:$PKG_CONFIG_PATH --enable-gtk-doc
+```
+
+If you use Meson, you can build and install Arrow GLib by the followings:
+
+```console
+% cd c_glib
+% meson build -Dgtk_doc=true
+% ninja -C build
+% sudo ninja -C build install
+```
+
+You need to set `PKG_CONFIG_PATH` on macOS:
+
+```console
+% PKG_CONFIG_PATH=$(brew --prefix libffi)/lib/pkgconfig:$PKG_CONFIG_PATH meson build -Dgtk_doc=true
 ```
 
 ## Usage
@@ -153,7 +198,7 @@ based bindings. Here are languages that support GObject Introspection:
   * Ruby: [red-arrow gem](https://rubygems.org/gems/red-arrow) should be used.
     * Examples: https://github.com/red-data-tools/red-arrow/tree/master/example
 
-  * Python: [PyGObject](https://wiki.gnome.org/Projects/PyGObject) should be used. (Note that you should use PyArrow than Arrow GLib.)
+  * Python: [PyGObject](https://wiki.gnome.org/Projects/PyGObject) should be used. (Note that you should prefer PyArrow over Arrow GLib.)
 
   * Lua: [LGI](https://github.com/pavouk/lgi) should be used.
     * Examples: `example/lua/` directory.
@@ -166,7 +211,7 @@ for other languages.
 
 ## How to run test
 
-Arrow GLib has unit tests. You can confirm that you install Apache
+Arrow GLib has unit tests. You can confirm that you install Arrow
 GLib correctly by running unit tests.
 
 You need to install the followings to run unit tests:
@@ -179,14 +224,15 @@ You can install them by the followings:
 
 On Debian GNU/Linux or Ubuntu:
 
-```text
+```console
 % sudo apt install -y -V ruby-dev
-% sudo gem install gobject-introspection test-unit
+% sudo gem install bundler
+% (cd c_glib && bundle install)
 ```
 
 On CentOS 7 or later:
 
-```text
+```console
 % sudo yum install -y git
 % git clone https://github.com/sstephenson/rbenv.git ~/.rbenv
 % git clone https://github.com/sstephenson/ruby-build.git ~/.rbenv/plugins/ruby-build
@@ -196,20 +242,21 @@ On CentOS 7 or later:
 % sudo yum install -y gcc make patch openssl-devel readline-devel zlib-devel
 % rbenv install 2.4.1
 % rbenv global 2.4.1
-% gem install gobject-introspection test-unit
+% gem install bundler
+% (cd c_glib && bundle install)
 ```
 
 On macOS with [Homebrew](https://brew.sh/):
 
-```text
-% gem install gobject-introspection test-unit
+```console
+% (cd c_glib && bundle install)
 ```
 
 Now, you can run unit tests by the followings:
 
-```text
+```console
 % cd c_glib
-% test/run-test.sh
+% bundle exec test/run-test.sh
 ```
 
 ## Common build problems
@@ -229,7 +276,7 @@ In this case, you need to run `brew link autoconf-archive`. It may fail with the
 
 ```console
 % brew link autoconf-archive
-Linking /usr/local/Cellar/autoconf-archive/2017.03.21... 
+Linking /usr/local/Cellar/autoconf-archive/2017.03.21...
 Error: Could not symlink share/aclocal/ax_check_enable_debug.m4
 Target /usr/local/share/aclocal/ax_check_enable_debug.m4
 is a symlink belonging to gnome-common. You can unlink it:
@@ -251,3 +298,28 @@ gobject-introspection requires libffi, and it's automatically installed with gob
 ### build failed - /usr/bin/ld: cannot find -larrow
 
 Arrow C++ must be installed to build Arrow GLib. Run `make install` on Arrow C++ build directory. In addtion, on linux, you may need to run `sudo ldconfig`.
+
+### build failed - unable to load http://docbook.sourceforge.net/release/xsl/current/html/chunk.xsl
+
+On macOS you may need to set the following environment variable:
+
+```console
+% export XML_CATALOG_FILES="/usr/local/etc/xml/catalog"
+```
+
+### build failed - Symbol not found, referenced from `libsource-highlight.4.dylib`
+
+On macOS if you see the following error you may need to upgrade `source-highlight`
+
+```console
+dyld: Symbol not found: __ZN5boost16re_detail_10650112perl_matcherIPKcNSt3__19allocatorINS_9sub_matchIS3_EEEENS_12regex_traitsIcNS_16cpp_regex_traitsIcEEEEE14construct_initERKNS_11basic_regexIcSC_EENS_15regex_constants12_match_flagsE
+  Referenced from: /usr/local/Cellar/source-highlight/3.1.8_7/lib/libsource-highlight.4.dylib
+  Expected in: flat namespace
+ in /usr/local/Cellar/source-highlight/3.1.8_7/lib/libsource-highlight.4.dylib
+```
+
+To fix do:
+
+```console
+% brew upgrade source-highlight
+```

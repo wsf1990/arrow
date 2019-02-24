@@ -17,26 +17,54 @@
   under the License.
 -->
 
-# Arrow C++
+# Apache Arrow C++ codebase
+
+This directory contains the code and build system for the Arrow C++ libraries,
+as well as for the C++ libraries for Apache Parquet.
 
 ## System setup
 
-Arrow uses CMake as a build configuration system. Currently, it supports in-source and
-out-of-source builds with the latter one being preferred.
+Arrow uses CMake as a build configuration system. Currently, it supports
+in-source and out-of-source builds with the latter one being preferred.
 
-Build Arrow requires:
+Building Arrow requires:
 
 * A C++11-enabled compiler. On Linux, gcc 4.8 and higher should be sufficient.
-* CMake
+* CMake 3.2 or higher
 * Boost
+* Bison/flex (for building Apache Thrift from source only,
+a parquet dependency.)
+
+Testing arrow with ctest requires:
+
+* python
 
 On Ubuntu/Debian you can install the requirements with:
 
 ```shell
-sudo apt-get install cmake \
+sudo apt-get install \
+     autoconf \
+     build-essential \
+     cmake \
      libboost-dev \
      libboost-filesystem-dev \
-     libboost-system-dev
+     libboost-regex-dev \
+     libboost-system-dev \
+     python \
+     bison \
+     flex
+```
+
+On Alpine Linux:
+
+```shell
+apk add autoconf \
+        bash \
+        boost-dev \
+        cmake \
+        g++ \
+        gcc \
+        make
 ```
 
 On macOS, you can use [Homebrew][1]:
@@ -51,25 +79,29 @@ If you are developing on Windows, see the [Windows developer guide][2].
 
 ## Building Arrow
 
-Simple debug build:
-
-    git clone https://github.com/apache/arrow.git
-    cd arrow/cpp
-    mkdir debug
-    cd debug
-    cmake ..
-    make unittest
-
 Simple release build:
 
     git clone https://github.com/apache/arrow.git
     cd arrow/cpp
     mkdir release
     cd release
-    cmake .. -DCMAKE_BUILD_TYPE=Release
+    cmake -DARROW_BUILD_TESTS=ON  ..
     make unittest
 
-Detailed unit test logs will be placed in the build directory under `build/test-logs`.
+Simple debug build:
+
+    git clone https://github.com/apache/arrow.git
+    cd arrow/cpp
+    mkdir debug
+    cd debug
+    cmake -DCMAKE_BUILD_TYPE=Debug -DARROW_BUILD_TESTS=ON ..
+    make unittest
+
+If you do not need to build the test suite, you can omit the
+`ARROW_BUILD_TESTS` option (the default is not to build the unit tests).
+
+Detailed unit test logs will be placed in the build directory under
+`build/test-logs`.
 
 On some Linux distributions, running the test suite might require setting an
 explicit locale. If you see any locale-related errors, try setting the
@@ -78,6 +110,56 @@ environment variable (which requires the `locales` package or equivalent):
 ```
 export LC_ALL="en_US.UTF-8"
 ```
+
+## Modular Build Targets
+
+Since there are several major parts of the C++ project, we have provided
+modular CMake targets for building each library component, group of unit tests
+and benchmarks, and their dependencies:
+
+* `make arrow` for Arrow core libraries
+* `make parquet` for Parquet libraries
+* `make gandiva` for Gandiva (LLVM expression compiler) libraries
+* `make plasma` for Plasma libraries, server
+
+To build the unit tests or benchmarks, add `-tests` or `-benchmarks` to the
+target name. So `make arrow-tests` will build the Arrow core unit tests. Using
+the `-all` target, e.g. `parquet-all`, will build everything.
+
+If you wish to only build and install one or more project subcomponents, we
+have provided the CMake option `ARROW_OPTIONAL_INSTALL` to only install targets
+that have been built. For example, if you only wish to build the Parquet
+libraries, its tests, and its dependencies, you can run:
+
+```
+cmake .. -DARROW_PARQUET=ON -DARROW_OPTIONAL_INSTALL=ON -DARROW_BUILD_TESTS=ON
+make parquet
+make install
+```
+
+If you omit an explicit target when invoking `make`, all targets will be built.
+
+## Parquet Development Notes
+
+To build the C++ libraries for Apache Parquet, add the flag
+`-DARROW_PARQUET=ON` when invoking CMake. The Parquet libraries and unit tests
+can be built with the `parquet` make target:
+
+```shell
+make parquet
+```
+
+Running `ctest -L unittest` will run all built C++ unit tests, while `ctest -L
+parquet` will run only the Parquet unit tests. The unit tests depend on an
+environment variable `PARQUET_TEST_DATA` that depends on a git submodule to the
+repository https://github.com/apache/parquet-testing:
+
+```shell
+git submodule update --init
+export PARQUET_TEST_DATA=$ARROW_ROOT/cpp/submodules/parquet-testing/data
+```
+
+Here `$ARROW_ROOT` is the absolute path to the Arrow codebase.
 
 ### Statically linking to Arrow on Windows
 
@@ -92,10 +174,10 @@ not use the macro.
 Follow the directions for simple build except run cmake
 with the `--ARROW_BUILD_BENCHMARKS` parameter set correctly:
 
-    cmake -DARROW_BUILD_BENCHMARKS=ON ..
+    cmake -DARROW_BUILD_TESTS=ON -DARROW_BUILD_BENCHMARKS=ON ..
 
 and instead of make unittest run either `make; ctest` to run both unit tests
-and benchmarks or `make runbenchmark` to run only the benchmark tests.
+and benchmarks or `make benchmark` to run only the benchmark tests.
 
 Benchmark logs will be placed in the build directory under `build/benchmark-logs`.
 
@@ -108,11 +190,11 @@ ASAN, and `ARROW_USE_ASAN` is mutually-exclusive with the valgrind option
 
 ### Building/Running fuzzers
 
-Fuzzers can help finding unhandled exceptions and problems with untrusted input that
-may lead to crashes, security issues and undefined behavior. They do this by
-generating random input data and observing the behavior of the executed code. To build
-the fuzzer code, LLVM is required (GCC-based compilers won't work). You can build them
-using the following code:
+Fuzzers can help finding unhandled exceptions and problems with untrusted input
+that may lead to crashes, security issues and undefined behavior. They do this
+by generating random input data and observing the behavior of the executed
+code. To build the fuzzer code, LLVM is required (GCC-based compilers won't
+work). You can build them using the following code:
 
     cmake -DARROW_FUZZING=ON -DARROW_USE_ASAN=ON ..
 
@@ -156,29 +238,18 @@ There are some problems that may occur during the compilation process:
 - libfuzzer was not distributed with your LLVM: `ld: file not found: .../libLLVMFuzzer.a`
 - your LLVM is too old: `clang: error: unsupported argument 'fuzzer' to option 'fsanitize='`
 
-### Third-party environment variables
+### Third-party dependencies and configuration
 
-To set up your own specific build toolchain, here are the relevant environment
-variables
+Arrow depends on a number of third-party libraries. We support these in a few
+ways:
 
-* Boost: `BOOST_ROOT`
-* Googletest: `GTEST_HOME` (only required to build the unit tests)
-* gflags: `GFLAGS_HOME` (only required to build the unit tests)
-* Google Benchmark: `GBENCHMARK_HOME` (only required if building benchmarks)
-* Flatbuffers: `FLATBUFFERS_HOME` (only required for the IPC extensions)
-* Hadoop: `HADOOP_HOME` (only required for the HDFS I/O extensions)
-* jemalloc: `JEMALLOC_HOME`
-* brotli: `BROTLI_HOME`, can be disabled with `-DARROW_WITH_BROTLI=off`
-* lz4: `LZ4_HOME`, can be disabled with `-DARROW_WITH_LZ4=off`
-* snappy: `SNAPPY_HOME`, can be disabled with `-DARROW_WITH_SNAPPY=off`
-* zlib: `ZLIB_HOME`, can be disabled with `-DARROW_WITH_ZLIB=off`
-* zstd: `ZSTD_HOME`, can be disabled with `-DARROW_WITH_ZSTD=off`
+* Building dependencies from source by downloading archives from the internet
+* Building dependencies from source using from local archives (to allow offline
+  builds)
+* Building with locally-installed libraries
 
-If you have all of your toolchain libraries installed at the same prefix, you
-can use the environment variable `$ARROW_BUILD_TOOLCHAIN` to automatically set
-all of these variables. Note that `ARROW_BUILD_TOOLCHAIN` will not set
-`BOOST_ROOT`, so if you have custom Boost installation, you must set this
-environment variable separately.
+See [thirdparty/README.md][5] for details about these options and how to
+configure your build toolchain.
 
 ### Building Python integration library (optional)
 
@@ -190,13 +261,11 @@ The Python library must be built against the same Python version for which you
 are building pyarrow, e.g. Python 2.7 or Python 3.6. NumPy must also be
 installed.
 
-### Building GPU extension library (optional)
+### Building CUDA extension library (optional)
 
-The optional `arrow_gpu` shared library can be built by passing
-`-DARROW_GPU=on`. This requires a CUDA installation to build, and to use many
-of the functions you must have a functioning GPU. Currently only CUDA
-functionality is supported, though if there is demand we can also add OpenCL
-interfaces in this library as needed.
+The optional `arrow_cuda` shared library can be built by passing
+`-DARROW_CUDA=on`. This requires a CUDA installation to build, and to use many
+of the functions you must have a functioning CUDA-compatible GPU.
 
 The CUDA toolchain used to build the library can be customized by using the
 `$CUDA_HOME` environment variable.
@@ -211,10 +280,94 @@ The optional arrow reader for the Apache ORC format (found in the
 This is currently not supported on windows. Note that this functionality is
 still in Alpha stages, and subject to API changes without deprecation warnings.
 
+### Building and developing Gandiva (optional)
+
+The Gandiva library supports compiling and evaluating expressions on arrow
+data. It uses LLVM for doing just-in-time compilation of the expressions.
+
+In addition to the arrow dependencies, gandiva requires :
+* On linux, gcc 4.9 or higher C++11-enabled compiler.
+* LLVM
+
+On Ubuntu/Debian you can install these requirements with:
+
+```shell
+sudo apt-add-repository -y "deb http://llvm.org/apt/trusty/ llvm-toolchain-trusty-7.0 main"
+sudo apt-get update -qq
+sudo apt-get install llvm-7.0-dev
+```
+
+On macOS, you can use [Homebrew][1]:
+
+```shell
+brew install llvm@7
+```
+
+The optional `gandiva` libraries and tests can be built by passing
+`-DARROW_GANDIVA=on`.
+
+```shell
+cmake .. -DARROW_GANDIVA=ON -DARROW_BUILD_TESTS=ON
+make
+ctest -L gandiva
+```
+
+This library is still in Alpha stages, and subject to API changes without
+deprecation warnings.
+
+### Building and developing Flight (optional)
+
+In addition to the Arrow dependencies, Flight requires:
+* gRPC (>= 1.14, roughly)
+* Protobuf (>= 3.6, earlier versions may work)
+* c-ares (used by gRPC)
+
+By default, Arrow will try to download and build these dependencies
+when building Flight.
+
+The optional `flight` libraries and tests can be built by passing
+`-DARROW_FLIGHT=ON`.
+
+```shell
+cmake .. -DARROW_FLIGHT=ON -DARROW_BUILD_TESTS=ON
+make
+```
+
+You can also use existing installations of the extra dependencies.
+When building, set the environment variables `GRPC_HOME` and/or
+`PROTOBUF_HOME` and/or `CARES_HOME`.
+
+You may try using system libraries for gRPC and Protobuf, but these
+are likely to be too old.
+
+On Ubuntu/Debian, you can try:
+
+```shell
+sudo apt-get install libgrpc-dev libgrpc++-dev protobuf-compiler-grpc libc-ares-dev
+```
+
+Note that the version of gRPC in Ubuntu 18.10 is too old; you will
+have to install gRPC from source. (Ubuntu 19.04/Debian Sid may work.)
+
+On macOS, you can try [Homebrew][1]:
+
+```shell
+brew install grpc
+```
+
+You can also install gRPC from source. In this case, you must install
+gRPC to generate the necessary files for CMake to find gRPC:
+
+```shell
+cmake -DgRPC_INSTALL=ON -DgRPC_BUILD_TESTS=OFF -DgRPC_PROTOBUF_PROVIDER=package -DgRPC_ZLIB_PROVIDER=package -DgRPC_CARES_PROVIDER=package -DgRPC_SSL_PROVIDER=package
+```
+
+You can then specify `-DgRPC_DIR` to `cmake`.
+
 ### API documentation
 
 To generate the (html) API documentation, run the following command in the apidoc
-directoy:
+directory:
 
     doxygen Doxyfile
 
@@ -222,9 +375,13 @@ This requires [Doxygen](http://www.doxygen.org) to be installed.
 
 ## Development
 
-This project follows [Google's C++ Style Guide][3] with minor exceptions. We do
-not encourage anonymous namespaces and we relax the line length restriction to
-90 characters.
+This project follows [Google's C++ Style Guide][3] with minor exceptions:
+
+  *  We relax the line length restriction to 90 characters.
+  *  We use the NULLPTR macro defined in `src/arrow/util/macros.h` to
+     support building C++/CLI (ARROW-1134)
+  *  We use doxygen style comments ("///") instead of line comments ("//")
+     in header files.
 
 ### Memory Pools
 
@@ -233,6 +390,12 @@ matter of convenience, some of the array builder classes have constructors
 which use the default pool without explicitly passing it. You can disable these
 constructors in your application (so that you are accounting properly for all
 memory allocations) by defining `ARROW_NO_DEFAULT_MEMORY_POOL`.
+
+### Header files
+
+We use the `.h` extension for C++ header files. Any header file name not
+containing `internal` is considered to be a public header, and will be
+automatically installed by the build.
 
 ### Error Handling and Exceptions
 
@@ -299,14 +462,16 @@ CC="clang-4.0" CXX="clang++-4.0" cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ..
 
 This presumes that `include-what-you-use` and `iwyu_tool.py` are in your
 `$PATH`. If you compiled IWYU using a different version of clang, then
-substitute the version number above accordingly. The results of this script are
-logged to a temporary file, whose location can be found by examining the shell
-output:
+substitute the version number above accordingly.
 
-```
-...
-Logging IWYU to /tmp/arrow-cpp-iwyu.gT7XXV
-...
+We have provided a Docker-based IWYU to make it easier to run these
+checks. This can be run using the docker-compose setup in the `dev/` directory
+
+```shell
+# If you have not built the base image already
+docker build -t arrow_integration_xenial_base -f dev/docker_common/Dockerfile.xenial.base .
+
+dev/run_docker_compose.sh iwyu
 ```
 
 ### Linting
@@ -320,9 +485,46 @@ You can also fix any formatting errors automatically:
 
     make format
 
-These commands require `clang-format-4.0` (and not any other version).
+These commands require `clang-format-6.0` (and not any other version).
 You may find the required packages at http://releases.llvm.org/download.html
-or use the Debian/Ubuntu APT repositories on https://apt.llvm.org/.
+or use the Debian/Ubuntu APT repositories on https://apt.llvm.org/. On macOS
+with [Homebrew][1] you can get it via `brew install llvm@6`.
+
+Depending on how you installed clang-format, the build system may not be able
+to find it. You can provide an explicit path to your LLVM installation (or the
+root path for the clang tools) with the environment variable
+`$CLANG_TOOLS_PATH` or by passing `-DClangTools_PATH=$PATH_TO_CLANG_TOOLS` when
+invoking CMake.
+
+Additionally, all CMake files should go through an automatic formatter.
+You'll need Python 3 and [cmake_format](https://github.com/cheshirekow/cmake_format)
+installed.  Then in the top-level directory run the `run-cmake-format.py`
+script.
+
+
+## Checking for ABI and API stability
+
+To build ABI compliance reports, you need to install the two tools
+`abi-dumper` and `abi-compliance-checker`.
+
+Build Arrow C++ in Debug mode, alternatively you could use `-Og` which also
+builds with the necessary symbols but includes a bit of code optimization.
+Once the build has finished, you can generate ABI reports using:
+
+```
+abi-dumper -lver 9 debug/libarrow.so -o ABI-9.dump
+```
+
+The above version number is freely selectable. As we want to compare versions,
+you should now `git checkout` the version you want to compare it to and re-run
+the above command using a different version number. Once both reports are
+generated, you can build a comparision report using
+
+```
+abi-compliance-checker -l libarrow -d1 ABI-PY-9.dump -d2 ABI-PY-10.dump
+```
+
+The report is then generated in `compat_reports/libarrow` as a HTML.
 
 ## Continuous Integration
 
@@ -353,7 +555,16 @@ both of these options would be used rarely. Current known uses-cases when they a
 
 *  Parameterized tests in google test.
 
+## CMake version requirements
+
+We support CMake 3.2 and higher. Some features require a newer version of CMake:
+
+* Building the benchmarks requires 3.6 or higher
+* Building zstd from source requires 3.7 or higher
+* Building Gandiva JNI bindings requires 3.11 or higher
+
 [1]: https://brew.sh/
 [2]: https://github.com/apache/arrow/blob/master/cpp/apidoc/Windows.md
 [3]: https://google.github.io/styleguide/cppguide.html
 [4]: https://github.com/include-what-you-use/include-what-you-use
+[5]: https://github.com/apache/arrow/blob/master/cpp/thirdparty/README.md

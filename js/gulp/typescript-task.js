@@ -16,35 +16,41 @@
 // under the License.
 
 const {
-    targetDir, tsconfigName, observableFromStreams
+    targetDir,
+    tsconfigName,
+    observableFromStreams,
+    shouldRunInChildProcess,
+    spawnGulpCommandInChildProcess,
 } = require('./util');
 
-const del = require('del');
 const gulp = require('gulp');
 const path = require('path');
 const ts = require(`gulp-typescript`);
-const gulpRename = require(`gulp-rename`);
 const sourcemaps = require('gulp-sourcemaps');
 const { memoizeTask } = require('./memoize-task');
 const { Observable, ReplaySubject } = require('rxjs');
 
 const typescriptTask = ((cache) => memoizeTask(cache, function typescript(target, format) {
+
+    if (shouldRunInChildProcess(target, format)) {
+        return spawnGulpCommandInChildProcess('compile', target, format);
+    }
+
     const out = targetDir(target, format);
     const tsconfigPath = path.join(`tsconfig`, `tsconfig.${tsconfigName(target, format)}.json`);
     return compileTypescript(out, tsconfigPath)
         .merge(compileBinFiles(target, format)).takeLast(1)
-        .concat(maybeCopyRawJSArrowFormatFiles(target, format))
         .publish(new ReplaySubject()).refCount();
 }))({});
 
 function compileBinFiles(target, format) {
     const out = targetDir(target, format);
     const tsconfigPath = path.join(`tsconfig`, `tsconfig.${tsconfigName('bin', 'cjs')}.json`);
-    return compileTypescript(path.join(out, 'bin'), tsconfigPath);
+    return compileTypescript(path.join(out, 'bin'), tsconfigPath, { target });
 }
 
-function compileTypescript(out, tsconfigPath) {
-    const tsProject = ts.createProject(tsconfigPath, { typescript: require(`typescript`) });
+function compileTypescript(out, tsconfigPath, tsconfigOverrides) {
+    const tsProject = ts.createProject(tsconfigPath, { typescript: require(`typescript`), ...tsconfigOverrides });
     const { stream: { js, dts } } = observableFromStreams(
       tsProject.src(), sourcemaps.init(),
       tsProject(ts.reporter.defaultReporter())
@@ -57,18 +63,3 @@ function compileTypescript(out, tsconfigPath) {
 module.exports = typescriptTask;
 module.exports.typescriptTask = typescriptTask;
 module.exports.compileBinFiles = compileBinFiles;
-
-function maybeCopyRawJSArrowFormatFiles(target, format) {
-    if (target !== `es5` || format !== `cls`) {
-        return Observable.empty();
-    }
-    return Observable.defer(async () => {
-        const outFormatDir = path.join(targetDir(target, format), `fb`);
-        await del(path.join(outFormatDir, '*.js'));
-        await observableFromStreams(
-            gulp.src(path.join(`src`, `fb`, `*_generated.js`)),
-            gulpRename((p) => { p.basename = p.basename.replace(`_generated`, ``); }),
-            gulp.dest(outFormatDir)
-        ).toPromise();
-    });
-}

@@ -1,13 +1,12 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,7 +15,12 @@
  * limitations under the License.
  */
 
+import io.netty.buffer.ArrowBuf;
+import org.apache.arrow.vector.complex.writer.DecimalWriter;
+import org.apache.arrow.vector.holders.DecimalHolder;
+
 import java.lang.UnsupportedOperationException;
+import java.math.BigDecimal;
 
 <@pp.dropOutputFile />
 <@pp.changeOutputFile name="/org/apache/arrow/vector/complex/impl/UnionListWriter.java" />
@@ -108,6 +112,21 @@ public class UnionListWriter extends AbstractFieldWriter {
   </#list></#list>
 
   @Override
+  public DecimalWriter decimal() {
+    return this;
+  }
+
+  @Override
+  public DecimalWriter decimal(String name, int scale, int precision) {
+    return writer.decimal(name, scale, precision);
+  }
+
+  @Override
+  public DecimalWriter decimal(String name) {
+    return writer.decimal(name);
+  }
+
+  @Override
   public StructWriter struct() {
     inStruct = true;
     return this;
@@ -151,6 +170,22 @@ public class UnionListWriter extends AbstractFieldWriter {
   public void end() {
     writer.end();
     inStruct = false;
+  }
+
+  @Override
+  public void write(DecimalHolder holder) {
+    writer.write(holder);
+    writer.setPosition(writer.idx()+1);
+  }
+
+  public void writeDecimal(int start, ArrowBuf buffer) {
+    writer.writeDecimal(start, buffer);
+    writer.setPosition(writer.idx()+1);
+  }
+
+  public void writeDecimal(BigDecimal value) {
+    writer.writeDecimal(value);
+    writer.setPosition(writer.idx()+1);
   }
 
   <#list vv.types as type>

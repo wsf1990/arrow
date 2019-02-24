@@ -19,7 +19,7 @@ from __future__ import division
 
 import pytest
 
-from collections import namedtuple, OrderedDict, defaultdict
+import collections
 import datetime
 import os
 import string
@@ -99,9 +99,19 @@ def assert_equal(obj1, obj2):
                                         .format(obj1, obj2))
         for i in range(len(obj1)):
             assert_equal(obj1[i], obj2[i])
+    elif isinstance(obj1, pa.Array) and isinstance(obj2, pa.Array):
+        assert obj1.equals(obj2)
+    elif isinstance(obj1, pa.Tensor) and isinstance(obj2, pa.Tensor):
+        assert obj1.equals(obj2)
+    elif isinstance(obj1, pa.Tensor) and isinstance(obj2, pa.Tensor):
+        assert obj1.equals(obj2)
+    elif isinstance(obj1, pa.RecordBatch) and isinstance(obj2, pa.RecordBatch):
+        assert obj1.equals(obj2)
+    elif isinstance(obj1, pa.Table) and isinstance(obj2, pa.Table):
+        assert obj1.equals(obj2)
     else:
-        assert obj1 == obj2, ("Objects {} and {} are different."
-                              .format(obj1, obj2))
+        assert type(obj1) == type(obj2) and obj1 == obj2, \
+                "Objects {} and {} are different.".format(obj1, obj2)
 
 
 PRIMITIVE_OBJECTS = [
@@ -115,11 +125,12 @@ PRIMITIVE_OBJECTS = [
     {True: "hello", False: "world"}, {"hello": "world", 1: 42, 2.5: 45},
     {"hello": set([2, 3]), "world": set([42.0]), "this": None},
     np.int8(3), np.int32(4), np.int64(5),
-    np.uint8(3), np.uint32(4), np.uint64(5), np.float16(1.9), np.float32(1.9),
+    np.uint8(3), np.uint32(4), np.uint64(5),
+    np.float16(1.9), np.float32(1.9),
     np.float64(1.9), np.zeros([8, 20]),
     np.random.normal(size=[17, 10]), np.array(["hi", 3]),
     np.array(["hi", 3], dtype=object),
-    np.random.normal(size=[15, 13]).T,
+    np.random.normal(size=[15, 13]).T
 ]
 
 
@@ -186,15 +197,17 @@ class CustomError(Exception):
     pass
 
 
-Point = namedtuple("Point", ["x", "y"])
-NamedTupleExample = namedtuple("Example",
-                               "field1, field2, field3, field4, field5")
+Point = collections.namedtuple("Point", ["x", "y"])
+NamedTupleExample = collections.namedtuple(
+    "Example", "field1, field2, field3, field4, field5")
 
 
 CUSTOM_OBJECTS = [Exception("Test object."), CustomError(), Point(11, y=22),
                   Foo(), Bar(), Baz(), Qux(), SubQux(), SubQuxPickle(),
                   NamedTupleExample(1, 1.0, "hi", np.zeros([3, 5]), [1, 2, 3]),
-                  OrderedDict([("hello", 1), ("world", 2)])]
+                  collections.OrderedDict([("hello", 1), ("world", 2)]),
+                  collections.deque([1, 2, 3, "a", "b", "c", 3.5]),
+                  collections.Counter([1, 1, 1, 2, 2, 3, "a", "b"])]
 
 
 def make_serialization_context():
@@ -288,6 +301,25 @@ def test_primitive_serialization(large_buffer):
         serialization_roundtrip(obj, large_buffer)
 
 
+def test_integer_limits(large_buffer):
+    # Check that Numpy scalars can be represented up to their limit values
+    # (except np.uint64 which is limited to 2**63 - 1)
+    for dt in [np.int8, np.int64, np.int32, np.int64,
+               np.uint8, np.uint64, np.uint32, np.uint64]:
+        scal = dt(np.iinfo(dt).min)
+        serialization_roundtrip(scal, large_buffer)
+        if dt is not np.uint64:
+            scal = dt(np.iinfo(dt).max)
+            serialization_roundtrip(scal, large_buffer)
+        else:
+            scal = dt(2**63 - 1)
+            serialization_roundtrip(scal, large_buffer)
+            for v in (2**63, 2**64 - 1):
+                scal = dt(v)
+                with pytest.raises(pa.ArrowInvalid):
+                    pa.serialize(scal)
+
+
 def test_serialize_to_buffer():
     for nthreads in [1, 4]:
         for value in COMPLEX_OBJECTS:
@@ -309,7 +341,7 @@ def test_custom_serialization(large_buffer):
 def test_default_dict_serialization(large_buffer):
     pytest.importorskip("cloudpickle")
 
-    obj = defaultdict(lambda: 0, [("hello", 1), ("world", 2)])
+    obj = collections.defaultdict(lambda: 0, [("hello", 1), ("world", 2)])
     serialization_roundtrip(obj, large_buffer)
 
 
@@ -363,6 +395,21 @@ def test_torch_serialization(large_buffer):
         obj = torch.from_numpy(np.random.randn(1000).astype(t))
         serialization_roundtrip(obj, large_buffer,
                                 context=serialization_context)
+
+    tensor_requiring_grad = torch.randn(10, 10, requires_grad=True)
+    serialization_roundtrip(tensor_requiring_grad, large_buffer,
+                            context=serialization_context)
+
+
+@pytest.mark.skipif(not torch or not torch.cuda.is_available(),
+                    reason="requires pytorch with CUDA")
+def test_torch_cuda():
+    # ARROW-2920: This used to segfault if torch is not imported
+    # before pyarrow
+    # Note that this test will only catch the issue if it is run
+    # with a pyarrow that has been built in the manylinux1 environment
+    torch.nn.Conv2d(64, 2, kernel_size=3, stride=1,
+                    padding=1, bias=False).cuda()
 
 
 def test_numpy_immutable(large_buffer):
@@ -442,6 +489,27 @@ def test_numpy_subclass_serialization():
     assert np.alltrue(new_x.view(np.ndarray) == np.zeros(3))
 
 
+def test_pyarrow_objects_serialization(large_buffer):
+    # NOTE: We have to put these objects inside,
+    # or it will affect 'test_total_bytes_allocated'.
+    pyarrow_objects = [
+        pa.array([1, 2, 3, 4]), pa.array(['1', u'never U+1F631', '',
+                                         u"233 * U+1F600"]),
+        pa.array([1, None, 2, 3]),
+        pa.Tensor.from_numpy(np.random.rand(2, 3, 4)),
+        pa.RecordBatch.from_arrays(
+            [pa.array([1, None, 2, 3]),
+             pa.array(['1', u'never U+1F631', '', u"233 * u1F600"])],
+            ['a', 'b']),
+        pa.Table.from_arrays([pa.array([1, None, 2, 3]),
+                              pa.array(['1', u'never U+1F631', '',
+                                       u"233 * u1F600"])],
+                             ['a', 'b'])
+    ]
+    for obj in pyarrow_objects:
+        serialization_roundtrip(obj, large_buffer)
+
+
 def test_buffer_serialization():
 
     class BufferClass(object):
@@ -495,7 +563,7 @@ def test_arrow_limits(self):
 def test_serialization_callback_error():
 
     class TempClass(object):
-            pass
+        pass
 
     # Pass a SerializationContext into serialize, but TempClass
     # is not registered
@@ -505,7 +573,7 @@ def test_serialization_callback_error():
         serialized_object = pa.serialize(val, serialization_context)
     assert err.value.example_object == val
 
-    serialization_context.register_type(TempClass, 20*b"\x00")
+    serialization_context.register_type(TempClass, "TempClass")
     serialized_object = pa.serialize(TempClass(), serialization_context)
     deserialization_context = pa.SerializationContext()
 
@@ -513,7 +581,15 @@ def test_serialization_callback_error():
     # is not registered
     with pytest.raises(pa.DeserializationCallbackError) as err:
         serialized_object.deserialize(deserialization_context)
-    assert err.value.type_id == 20*b"\x00"
+    assert err.value.type_id == "TempClass"
+
+    class TempClass2(object):
+        pass
+
+    # Make sure that we receive an error when we use an inappropriate value for
+    # the type_id argument.
+    with pytest.raises(TypeError):
+        serialization_context.register_type(TempClass2, 1)
 
 
 def test_fallback_to_subclasses():
@@ -588,21 +664,35 @@ def test_serialize_to_components_invalid_cases():
 
     components = {
         'num_tensors': 0,
+        'num_ndarrays': 0,
         'num_buffers': 1,
         'data': [buf]
     }
 
-    with pytest.raises(pa.ArrowException):
+    with pytest.raises(pa.ArrowInvalid):
         pa.deserialize_components(components)
 
     components = {
-        'num_tensors': 1,
+        'num_tensors': 0,
+        'num_ndarrays': 1,
         'num_buffers': 0,
         'data': [buf, buf]
     }
 
-    with pytest.raises(pa.ArrowException):
+    with pytest.raises(pa.ArrowInvalid):
         pa.deserialize_components(components)
+
+
+def test_serialize_read_concatenated_records():
+    # ARROW-1996 -- see stream alignment work in ARROW-2840, ARROW-3212
+    f = pa.BufferOutputStream()
+    pa.serialize_to(12, f)
+    pa.serialize_to(23, f)
+    buf = f.getvalue()
+
+    f = pa.BufferReader(buf)
+    pa.read_serialized(f).deserialize()
+    pa.read_serialized(f).deserialize()
 
 
 @pytest.mark.skipif(os.name == 'nt', reason="deserialize_regex not pickleable")
@@ -717,3 +807,46 @@ def test_tensor_alignment():
     ys = pa.deserialize(pa.serialize(xs).to_buffer())
     for y in ys:
         assert y.ctypes.data % 64 == 0
+
+
+def test_serialization_determinism():
+    for obj in COMPLEX_OBJECTS:
+        buf1 = pa.serialize(obj).to_buffer()
+        buf2 = pa.serialize(obj).to_buffer()
+        assert buf1.to_pybytes() == buf2.to_pybytes()
+
+
+def test_serialize_recursive_objects():
+    class ClassA(object):
+        pass
+
+    # Make a list that contains itself.
+    lst = []
+    lst.append(lst)
+
+    # Make an object that contains itself as a field.
+    a1 = ClassA()
+    a1.field = a1
+
+    # Make two objects that contain each other as fields.
+    a2 = ClassA()
+    a3 = ClassA()
+    a2.field = a3
+    a3.field = a2
+
+    # Make a dictionary that contains itself.
+    d1 = {}
+    d1["key"] = d1
+
+    # Make a numpy array that contains itself.
+    arr = np.array([None], dtype=object)
+    arr[0] = arr
+
+    # Create a list of recursive objects.
+    recursive_objects = [lst, a1, a2, a3, d1, arr]
+
+    # Check that exceptions are thrown when we serialize the recursive
+    # objects.
+    for obj in recursive_objects:
+        with pytest.raises(Exception):
+            pa.serialize(obj).deserialize()

@@ -18,9 +18,9 @@
 #ifndef PYARROW_NUMPY_INTEROP_H
 #define PYARROW_NUMPY_INTEROP_H
 
-#include "arrow/python/platform.h"
+#include "arrow/python/platform.h"  // IWYU pragma: export
 
-#include <numpy/numpyconfig.h>
+#include <numpy/numpyconfig.h>  // IWYU pragma: export
 
 // Don't use the deprecated Numpy functions
 #ifdef NPY_1_7_API_VERSION
@@ -39,9 +39,9 @@
 #define NO_IMPORT_ARRAY
 #endif
 
-#include <numpy/arrayobject.h>
-#include <numpy/arrayscalars.h>
-#include <numpy/ufuncobject.h>
+#include <numpy/arrayobject.h>   // IWYU pragma: export
+#include <numpy/arrayscalars.h>  // IWYU pragma: export
+#include <numpy/ufuncobject.h>   // IWYU pragma: export
 
 // A bit subtle. Numpy has 5 canonical integer types:
 // (or, rather, type pairs: signed and unsigned)
@@ -78,6 +78,19 @@ inline int import_numpy() {
 #endif
 
   return 0;
+}
+
+// See above about the missing Numpy integer type numbers
+inline int fix_numpy_type_num(int type_num) {
+#if !NPY_INT32_IS_INT && NPY_BITSOF_INT == 32
+  if (type_num == NPY_INT) return NPY_INT32;
+  if (type_num == NPY_UINT) return NPY_UINT32;
+#endif
+#if !NPY_INT64_IS_LONG_LONG && NPY_BITSOF_LONGLONG == 64
+  if (type_num == NPY_LONGLONG) return NPY_INT64;
+  if (type_num == NPY_ULONGLONG) return NPY_UINT64;
+#endif
+  return type_num;
 }
 
 }  // namespace py

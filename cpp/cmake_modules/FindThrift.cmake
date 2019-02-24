@@ -34,6 +34,17 @@ if( NOT "${THRIFT_HOME}" STREQUAL "")
     list( APPEND _thrift_roots ${_native_path} )
 elseif ( Thrift_HOME )
     list( APPEND _thrift_roots ${Thrift_HOME} )
+elseif (APPLE)
+  # Also look in homebrew for a matching llvm version
+  find_program(BREW_BIN brew)
+  if (BREW_BIN)
+    execute_process(
+      COMMAND ${BREW_BIN} --prefix "thrift"
+      OUTPUT_VARIABLE THRIFT_BREW_PREFIX
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    list( APPEND _thrift_roots ${THRIFT_BREW_PREFIX} )
+  endif()
 endif()
 
 message(STATUS "THRIFT_HOME: ${THRIFT_HOME}")
@@ -65,10 +76,27 @@ find_program(THRIFT_COMPILER thrift HINTS
   PATH_SUFFIXES "bin"
 )
 
-if (THRIFT_STATIC_LIB)
-  set(THRIFT_FOUND TRUE)
+function(EXTRACT_THRIFT_VERSION)
   exec_program(${THRIFT_COMPILER}
     ARGS -version OUTPUT_VARIABLE THRIFT_VERSION RETURN_VALUE THRIFT_RETURN)
+  # We're expecting OUTPUT_VARIABLE to look like one of these:
+  #   0.9.3
+  #   Thrift version 0.11.0
+  if (THRIFT_VERSION MATCHES "Thrift version")
+    string(REGEX MATCH "Thrift version (([0-9]+\\.?)+)" _ "${THRIFT_VERSION}")
+    if (NOT CMAKE_MATCH_1)
+      message(SEND_ERROR "Could not extract Thrift version. "
+        "Version output: ${THRIFT_VERSION}")
+    endif()
+    set(THRIFT_VERSION "${CMAKE_MATCH_1}" PARENT_SCOPE)
+  else()
+    set(THRIFT_VERSION "${THRIFT_VERSION}" PARENT_SCOPE)
+  endif()
+endfunction(EXTRACT_THRIFT_VERSION)
+
+if (THRIFT_STATIC_LIB)
+  set(THRIFT_FOUND TRUE)
+  EXTRACT_THRIFT_VERSION()
 else ()
   set(THRIFT_FOUND FALSE)
 endif ()

@@ -32,12 +32,24 @@ for all supported Python versions and place them in the `dist` folder.
 ### Build instructions
 
 ```bash
-# Create a clean copy of the arrow source tree
-git clone ../../ arrow
-# Build the native baseimage
-docker build -t arrow-base-x86_64 -f Dockerfile-x86_64 .
 # Build the python packages
-docker run --shm-size=2g --rm -t -i -v $PWD:/io arrow-base-x86_64 /io/build_arrow.sh
+docker run --shm-size=2g --rm -t -i -v $PWD:/io -v $PWD/../../:/arrow quay.io/xhochy/arrow_manylinux1_x86_64_base:latest /io/build_arrow.sh
 # Now the new packages are located in the dist/ folder
 ls -l dist/
 ```
+
+### Updating the build environment
+The base docker image is less often updated. In the case we want to update
+a dependency to a new version, we also need to adjust it. You can rebuild
+this image using
+
+```bash
+docker build -t arrow_manylinux1_x86_64_base -f Dockerfile-x86_64_base .
+```
+
+For each dependency, we have a bash script in the directory `scripts/` that
+downloads the sources, builds and installs them. At the end of each dependency
+build the sources are removed again so that only the binary installation of a
+dependency is persisted in the docker image. When you do local adjustments to
+this image, you need to change the name of the docker image in the `docker run`
+command.

@@ -28,10 +28,10 @@ See the [release notes][10] for more about what's new.
 
 ### Source release
 
-* **Source Release**: [apache-arrow-0.9.0.tar.gz][6]
-* **Verification**: [sha512][3], [asc][7] ([verification instructions][12])
+* **Source Release**: [{{site.data.versions['current'].tarball_name}}][6]
+* **Verification**: [asc signature][13], [sha256 checksum][14], [sha512 checksum][15], ([verification instructions][12])
 * [Git tag {{site.data.versions['current'].git-tag}}][2]
-* [PGP keys for release signatures][11]
+* [GPG keys for release signatures][11]
 
 ### Java Packages
 
@@ -39,39 +39,37 @@ See the [release notes][10] for more about what's new.
 
 ## Binary Installers for C, C++, Python
 
-Binary packages may not be updated immediately after the source release is posted.
-
 ### C++ and Python Conda Packages (Unofficial)
 
 We have provided binary conda packages on [conda-forge][5] for the following
 platforms:
 
-* Linux and macOS (Python 2.7, 3.5, and 3.6)
-* Windows (Python 3.5 and 3.6)
+* Linux and macOS (Python 2.7, 3.6 and 3.7)
+* Windows (Python 3.6 and 3.7)
 
 Install them with:
 
 
 ```shell
-conda install arrow-cpp=0.9.* -c conda-forge
-conda install pyarrow=0.9.* -c conda-forge
+conda install arrow-cpp={{site.data.versions['current'].pinned_number}} -c conda-forge
+conda install pyarrow={{site.data.versions['current'].pinned_number}} -c conda-forge
 ```
 
-### Python Wheels on PyPI (Unofficial)
+### Python Wheels on PyPI
 
-We have provided binary wheels on PyPI for Linux, macOS, and Windows:
+We have provided official binary wheels on PyPI for Linux, macOS, and Windows:
 
 ```shell
-pip install pyarrow==0.9.*
+pip install pyarrow=={{site.data.versions['current'].pinned_number}}
 ```
 
-We recommend pinning `0.9.*` in `requirements.txt` to install the latest patch
-release.
+We recommend pinning `{{site.data.versions['current'].pinned_number}}`
+in `requirements.txt` to install the latest patch release.
 
 These include the Apache Arrow and Apache Parquet C++ binary libraries bundled
 with the wheel.
 
-### C++ and GLib (C) Packages for Debian GNU/Linux, Ubuntu and CentOS (Unofficial)
+### C++ and GLib (C) Packages for Debian GNU/Linux, Ubuntu and CentOS
 
 We have provided APT and Yum repositories for Apache Arrow C++ and
 Apache Arrow GLib (C). Here are supported platforms:
@@ -79,81 +77,129 @@ Apache Arrow GLib (C). Here are supported platforms:
 * Debian GNU/Linux stretch
 * Ubuntu 14.04 LTS
 * Ubuntu 16.04 LTS
-* Ubuntu 17.04
-* Ubuntu 17.10
+* Ubuntu 18.04 LTS
+* Ubuntu 18.10
 * CentOS 6
 * CentOS 7
 
 Debian GNU/Linux:
 
 ```shell
-sudo apt install -y -V apt-transport-https
-sudo apt install -y -V lsb-release
-cat <<APT_LINE | sudo tee /etc/apt/sources.list.d/red-data-tools.list
-deb https://packages.red-data-tools.org/debian/ $(lsb_release --codename --short) main
-deb-src https://packages.red-data-tools.org/debian/ $(lsb_release --codename --short) main
+sudo apt update
+sudo apt install -y -V apt-transport-https lsb-release
+sudo wget -O /usr/share/keyrings/apache-arrow-keyring.gpg https://dl.bintray.com/apache/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-keyring.gpg
+sudo tee /etc/apt/sources.list.d/apache-arrow.list <<APT_LINE
+deb [arch=amd64 signed-by=/usr/share/keyrings/apache-arrow-keyring.gpg] https://dl.bintray.com/apache/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/ $(lsb_release --codename --short) main
+deb-src [signed-by=/usr/share/keyrings/apache-arrow-keyring.gpg] https://dl.bintray.com/apache/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/ $(lsb_release --codename --short) main
 APT_LINE
-sudo apt update --allow-insecure-repositories
-sudo apt install -y -V --allow-unauthenticated red-data-tools-keyring
+curl https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+sudo tee /etc/apt/sources.list.d/llvm.list <<APT_LINE
+deb http://apt.llvm.org/$(lsb_release --codename --short)/ llvm-toolchain-$(lsb_release --codename --short)-7 main
+deb-src http://apt.llvm.org/$(lsb_release --codename --short)/ llvm-toolchain-$(lsb_release --codename --short)-7 main
+APT_LINE
 sudo apt update
 sudo apt install -y -V libarrow-dev # For C++
 sudo apt install -y -V libarrow-glib-dev # For GLib (C)
+sudo apt install -y -V libplasma-dev # For Plasma C++
+sudo apt install -y -V libplasma-glib-dev # For Plasma GLib (C)
+sudo apt install -y -V libgandiva-dev # For Gandiva C++
+sudo apt install -y -V libgandiva-glib-dev # For Gandiva GLib (C)
+sudo apt install -y -V libparquet-dev # For Apache Parquet C++
+sudo apt install -y -V libparquet-glib-dev # For Apache Parquet GLib (C)
 ```
 
-Ubuntu:
+Ubuntu 18.04 LTS or later:
 
 ```shell
-sudo apt install -y -V apt-transport-https
-sudo apt install -y -V lsb-release
-cat <<APT_LINE | sudo tee /etc/apt/sources.list.d/red-data-tools.list
-deb https://packages.red-data-tools.org/ubuntu/ $(lsb_release --codename --short) universe
-deb-src https://packages.red-data-tools.org/ubuntu/ $(lsb_release --codename --short) universe
+sudo apt update
+sudo apt install -y -V apt-transport-https lsb-release
+sudo wget -O /usr/share/keyrings/apache-arrow-keyring.gpg https://dl.bintray.com/apache/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-keyring.gpg
+sudo tee /etc/apt/sources.list.d/apache-arrow.list <<APT_LINE
+deb [arch=amd64 signed-by=/usr/share/keyrings/apache-arrow-keyring.gpg] https://dl.bintray.com/apache/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/ $(lsb_release --codename --short) main
+deb-src [signed-by=/usr/share/keyrings/apache-arrow-keyring.gpg] https://dl.bintray.com/apache/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/ $(lsb_release --codename --short) main
 APT_LINE
-sudo apt update --allow-insecure-repositories || sudo apt update
-sudo apt install -y -V --allow-unauthenticated red-data-tools-keyring
 sudo apt update
 sudo apt install -y -V libarrow-dev # For C++
 sudo apt install -y -V libarrow-glib-dev # For GLib (C)
+sudo apt install -y -V libplasma-dev # For Plasma C++
+sudo apt install -y -V libplasma-glib-dev # For Plasma GLib (C)
+sudo apt install -y -V libgandiva-dev # For Gandiva C++
+sudo apt install -y -V libgandiva-glib-dev # For Gandiva GLib (C)
+sudo apt install -y -V libparquet-dev # For Apache Parquet C++
+sudo apt install -y -V libparquet-glib-dev # For Apache Parquet GLib (C)
+```
+
+Ubuntu 16.04 LTS:
+
+```shell
+sudo apt update
+sudo apt install -y -V apt-transport-https lsb-release
+curl https://dist.apache.org/repos/dist/dev/arrow/KEYS | sudo apt-key add -
+sudo tee /etc/apt/sources.list.d/apache-arrow.list <<APT_LINE
+deb [arch=amd64] https://dl.bintray.com/apache/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/ $(lsb_release --codename --short) main
+deb-src https://dl.bintray.com/apache/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/ $(lsb_release --codename --short) main
+APT_LINE
+curl https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+sudo tee /etc/apt/sources.list.d/llvm.list <<APT_LINE
+deb http://apt.llvm.org/$(lsb_release --codename --short)/ llvm-toolchain-$(lsb_release --codename --short)-7 main
+deb-src http://apt.llvm.org/$(lsb_release --codename --short)/ llvm-toolchain-$(lsb_release --codename --short)-7 main
+APT_LINE
+sudo apt update
+sudo apt install -y -V libarrow-dev # For C++
+sudo apt install -y -V libarrow-glib-dev # For GLib (C)
+sudo apt install -y -V libplasma-dev # For Plasma C++
+sudo apt install -y -V libplasma-glib-dev # For Plasma GLib (C)
+sudo apt install -y -V libgandiva-dev # For Gandiva C++
+sudo apt install -y -V libgandiva-glib-dev # For Gandiva GLib (C)
+sudo apt install -y -V libparquet-dev # For Apache Parquet C++
+sudo apt install -y -V libparquet-glib-dev # For Apache Parquet GLib (C)
+```
+
+Ubuntu 14.04 LTS:
+
+```shell
+sudo apt update
+sudo apt install -y -V apt-transport-https lsb-release
+curl https://dist.apache.org/repos/dist/dev/arrow/KEYS | sudo apt-key add -
+sudo tee /etc/apt/sources.list.d/apache-arrow.list <<APT_LINE
+deb [arch=amd64] https://dl.bintray.com/apache/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/ $(lsb_release --codename --short) main
+deb-src https://dl.bintray.com/apache/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/ $(lsb_release --codename --short) main
+APT_LINE
+sudo apt update
+sudo apt install -y -V libarrow-dev # For C++
+sudo apt install -y -V libarrow-glib-dev # For GLib (C)
+sudo apt install -y -V libplasma-dev # For Plasma C++
+sudo apt install -y -V libplasma-glib-dev # For Plasma GLib (C)
+sudo apt install -y -V libparquet-dev # For Apache Parquet C++
+sudo apt install -y -V libparquet-glib-dev # For Apache Parquet GLib (C)
 ```
 
 CentOS:
 
 ```shell
-sudo yum install -y https://packages.red-data-tools.org/centos/red-data-tools-release-1.0.0-1.noarch.rpm
+sudo tee /etc/yum.repos.d/Apache-Arrow.repo <<REPO
+[apache-arrow]
+name=Apache Arrow
+baseurl=https://dl.bintray.com/apache/arrow/centos/\$releasever/\$basearch/
+gpgcheck=1
+enabled=1
+gpgkey=https://dl.bintray.com/apache/arrow/centos/RPM-GPG-KEY-apache-arrow
+REPO
+sudo yum install -y epel-release
 sudo yum install -y --enablerepo=epel arrow-devel # For C++
 sudo yum install -y --enablerepo=epel arrow-glib-devel # For GLib (C)
-```
-
-These repositories also provide Apache Parquet C++ and
-[Parquet GLib][8]. You can install them by the followings:
-
-Debian GNU/Linux and Ubuntu:
-
-```shell
-sudo apt install -y -V libparquet-dev # For Apache Parquet C++
-sudo apt install -y -V libparquet-glib-dev # For Parquet GLib (C)
-```
-
-CentOS:
-
-```shell
 sudo yum install -y --enablerepo=epel parquet-devel # For Apache Parquet C++
 sudo yum install -y --enablerepo=epel parquet-glib-devel # For Parquet GLib (C)
 ```
 
-These repositories are managed at
-[red-data-tools/arrow-packages][9]. If you have any feedback, please
-send it to the project instead of Apache Arrow project.
-
 [1]: {{site.data.versions['current'].mirrors}}
 [2]: {{site.data.versions['current'].github-tag-link}}
-[3]: {{site.data.versions['current'].sha512}}
 [4]: {{site.data.versions['current'].java-artifacts}}
-[5]: http://conda-forge.github.io
+[5]: https://conda-forge.github.io
 [6]: {{site.data.versions['current'].mirrors-tar}}
-[7]: {{site.data.versions['current'].asc}}
-[8]: https://github.com/red-data-tools/parquet-glib
-[9]: https://github.com/red-data-tools/arrow-packages
 [10]: {{site.data.versions['current'].release-notes}}
-[11]: http://www.apache.org/dist/arrow/KEYS
+[11]: https://www.apache.org/dist/arrow/KEYS
 [12]: https://www.apache.org/dyn/closer.cgi#verify
+[13]: {{site.data.versions['current'].asc}}
+[14]: {{site.data.versions['current'].sha256}}
+[15]: {{site.data.versions['current'].sha512}}

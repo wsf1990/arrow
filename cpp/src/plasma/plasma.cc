@@ -22,11 +22,22 @@
 #include <unistd.h>
 
 #include "plasma/common.h"
+#include "plasma/common_generated.h"
+#include "plasma/plasma_allocator.h"
 #include "plasma/protocol.h"
+
+namespace fb = plasma::flatbuf;
 
 namespace plasma {
 
-int warn_if_sigpipe(int status, int client_sock) {
+ObjectTableEntry::ObjectTableEntry() : pointer(nullptr), ref_count(0) {}
+
+ObjectTableEntry::~ObjectTableEntry() {
+  PlasmaAllocator::Free(pointer, data_size + metadata_size);
+  pointer = nullptr;
+}
+
+int WarnIfSigpipe(int status, int client_sock) {
   if (status >= 0) {
     return 0;
   }
@@ -51,18 +62,19 @@ int warn_if_sigpipe(int status, int client_sock) {
  * @return The object info buffer. It is the caller's responsibility to free
  *         this buffer with "delete" after it has been used.
  */
-uint8_t* create_object_info_buffer(ObjectInfoT* object_info) {
+std::unique_ptr<uint8_t[]> CreateObjectInfoBuffer(fb::ObjectInfoT* object_info) {
   flatbuffers::FlatBufferBuilder fbb;
-  auto message = CreateObjectInfo(fbb, object_info);
+  auto message = fb::CreateObjectInfo(fbb, object_info);
   fbb.Finish(message);
-  uint8_t* notification = new uint8_t[sizeof(int64_t) + fbb.GetSize()];
-  *(reinterpret_cast<int64_t*>(notification)) = fbb.GetSize();
-  memcpy(notification + sizeof(int64_t), fbb.GetBufferPointer(), fbb.GetSize());
+  auto notification =
+      std::unique_ptr<uint8_t[]>(new uint8_t[sizeof(int64_t) + fbb.GetSize()]);
+  *(reinterpret_cast<int64_t*>(notification.get())) = fbb.GetSize();
+  memcpy(notification.get() + sizeof(int64_t), fbb.GetBufferPointer(), fbb.GetSize());
   return notification;
 }
 
-ObjectTableEntry* get_object_table_entry(PlasmaStoreInfo* store_info,
-                                         const ObjectID& object_id) {
+ObjectTableEntry* GetObjectTableEntry(PlasmaStoreInfo* store_info,
+                                      const ObjectID& object_id) {
   auto it = store_info->objects.find(object_id);
   if (it == store_info->objects.end()) {
     return NULL;

@@ -38,10 +38,11 @@ Launch cmd.exe and run following commands:
 conda config --add channels conda-forge
 ```
 
-Now, you can bootstrap a build environment
+Now, you can bootstrap a build environment (call from the root directory of the
+Arrow codebase):
 
 ```shell
-conda create -n arrow-dev cmake git boost-cpp flatbuffers rapidjson cmake thrift-cpp snappy zlib brotli gflags lz4-c zstd -c conda-forge
+conda create -n arrow-dev --file=ci\conda_env_cpp.yml
 ```
 
 > **Note:** Make sure to get the `conda-forge` build of `gflags` as the
@@ -89,10 +90,6 @@ variable:
 If you decided to use pre-built 3rd party dependencies libs, it's possible to
 configure Arrow's cmake build script to search for customized names of 3rd
 party static libs.
-
-`zlib`. Pass `-DARROW_ZLIB_VENDORED=OFF` to enable lookup of custom zlib
-build. Set `ZLIB_HOME` environment variable. Pass
-`-DZLIB_MSVC_STATIC_LIB_SUFFIX=%ZLIB_SUFFIX%` to link with z%ZLIB_SUFFIX%.lib
 
 `brotli`. Set `BROTLI_HOME` environment variable. Pass
 `-DBROTLI_MSVC_STATIC_LIB_SUFFIX=%BROTLI_SUFFIX%` to link with
@@ -231,11 +228,11 @@ cmake -G "Visual Studio 14 2015 Win64" ^
 cmake --build . --config Debug
 ```
 
-To get the latest build instructions, you can reference [msvc-build.bat][5], which is used by automated Appveyor builds.
+To get the latest build instructions, you can reference [cpp-python-msvc-build.bat][5], which is used by automated Appveyor builds.
 
 
 [1]: https://conda.io/miniconda.html
 [2]: https://conda-forge.github.io/
 [3]: http://cmder.net/
 [4]: https://cmake.org/
-[5]: https://github.com/apache/arrow/blob/master/ci/msvc-build.bat
+[5]: https://github.com/apache/arrow/blob/master/ci/cpp-python-msvc-build.bat

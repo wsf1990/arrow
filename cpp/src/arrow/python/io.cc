@@ -63,6 +63,22 @@ class PythonFile {
     return Status::OK();
   }
 
+  bool closed() const {
+    PyObject* result = PyObject_GetAttrString(file_, "closed");
+    if (result == NULL) {
+      // Can't propagate the error, so write it out and return an arbitrary value
+      PyErr_WriteUnraisable(NULL);
+      return true;
+    }
+    int ret = PyObject_IsTrue(result);
+    Py_XDECREF(result);
+    if (ret < 0) {
+      PyErr_WriteUnraisable(NULL);
+      return true;
+    }
+    return ret != 0;
+  }
+
   Status Seek(int64_t position, int whence) {
     // whence: 0 for relative to start of file, 2 for end of file
     PyObject* result = cpp_PyObject_CallMethod(file_, "seek", "(ni)",
@@ -124,6 +140,11 @@ Status PyReadableFile::Close() {
   return file_->Close();
 }
 
+bool PyReadableFile::closed() const {
+  PyAcquireGIL lock;
+  return file_->closed();
+}
+
 Status PyReadableFile::Seek(int64_t position) {
   PyAcquireGIL lock;
   return file_->Seek(position, 0);
@@ -138,7 +159,7 @@ Status PyReadableFile::Read(int64_t nbytes, int64_t* bytes_read, void* out) {
   PyAcquireGIL lock;
 
   PyObject* bytes_obj = NULL;
-  ARROW_RETURN_NOT_OK(file_->Read(nbytes, &bytes_obj));
+  RETURN_NOT_OK(file_->Read(nbytes, &bytes_obj));
   DCHECK(bytes_obj != NULL);
 
   *bytes_read = PyBytes_GET_SIZE(bytes_obj);
@@ -152,7 +173,7 @@ Status PyReadableFile::Read(int64_t nbytes, std::shared_ptr<Buffer>* out) {
   PyAcquireGIL lock;
 
   OwnedRef bytes_obj;
-  ARROW_RETURN_NOT_OK(file_->Read(nbytes, bytes_obj.ref()));
+  RETURN_NOT_OK(file_->Read(nbytes, bytes_obj.ref()));
   DCHECK(bytes_obj.obj() != NULL);
 
   return PyBuffer::FromPyObject(bytes_obj.obj(), out);
@@ -177,21 +198,19 @@ Status PyReadableFile::GetSize(int64_t* size) {
 
   int64_t current_position = -1;
 
-  ARROW_RETURN_NOT_OK(file_->Tell(&current_position));
+  RETURN_NOT_OK(file_->Tell(&current_position));
 
-  ARROW_RETURN_NOT_OK(file_->Seek(0, 2));
+  RETURN_NOT_OK(file_->Seek(0, 2));
 
   int64_t file_size = -1;
-  ARROW_RETURN_NOT_OK(file_->Tell(&file_size));
+  RETURN_NOT_OK(file_->Tell(&file_size));
 
   // Restore previous file position
-  ARROW_RETURN_NOT_OK(file_->Seek(current_position, 0));
+  RETURN_NOT_OK(file_->Seek(current_position, 0));
 
   *size = file_size;
   return Status::OK();
 }
-
-bool PyReadableFile::supports_zero_copy() const { return false; }
 
 // ----------------------------------------------------------------------
 // Output stream
@@ -205,6 +224,11 @@ PyOutputStream::~PyOutputStream() {}
 Status PyOutputStream::Close() {
   PyAcquireGIL lock;
   return file_->Close();
+}
+
+bool PyOutputStream::closed() const {
+  PyAcquireGIL lock;
+  return file_->closed();
 }
 
 Status PyOutputStream::Tell(int64_t* position) const {

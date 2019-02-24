@@ -26,12 +26,15 @@ from .common import KILOBYTE, MEGABYTE
 def generate_chunks(total_size, nchunks, ncols, dtype=np.dtype('int64')):
     rowsize = total_size // nchunks // ncols
     assert rowsize % dtype.itemsize == 0
+
+    def make_column(col, chunk):
+        return np.frombuffer(common.get_random_bytes(
+            rowsize, seed=col + 997 * chunk)).view(dtype)
+
     return [pd.DataFrame({
-            'c' + str(col): np.frombuffer(
-                common.get_random_bytes(rowsize, seed=col + 997 * chunk)).view(dtype)
-            for col in range(ncols)
-        })
-        for chunk in range(nchunks)]
+            'c' + str(col): make_column(col, chunk)
+            for col in range(ncols)})
+            for chunk in range(nchunks)]
 
 
 class StreamReader(object):
@@ -59,9 +62,9 @@ class StreamReader(object):
         stream_writer = pa.RecordBatchStreamWriter(sink, schema)
         for batch in batches:
             stream_writer.write_batch(batch)
-        self.source = sink.get_result()
+        self.source = sink.getvalue()
 
     def time_read_to_dataframe(self, *args):
         reader = pa.RecordBatchStreamReader(self.source)
         table = reader.read_all()
-        df = table.to_pandas()
+        df = table.to_pandas()  # noqa

@@ -22,72 +22,66 @@
 #define RAPIDJSON_HAS_CXX11_RVALUE_REFS 1
 #define RAPIDJSON_HAS_CXX11_RANGE_FOR 1
 
+#define RAPIDJSON_NAMESPACE arrow::rapidjson
+#define RAPIDJSON_NAMESPACE_BEGIN \
+  namespace arrow {               \
+  namespace rapidjson {
+#define RAPIDJSON_NAMESPACE_END \
+  }                             \
+  }
+
 #include <memory>
 #include <sstream>
 #include <string>
 
-#include "rapidjson/document.h"
-#include "rapidjson/stringbuffer.h"
-#include "rapidjson/writer.h"
+#include "rapidjson/document.h"      // IWYU pragma: export
+#include "rapidjson/encodings.h"     // IWYU pragma: export
+#include "rapidjson/error/en.h"      // IWYU pragma: export
+#include "rapidjson/stringbuffer.h"  // IWYU pragma: export
+#include "rapidjson/writer.h"        // IWYU pragma: export
 
-#include "arrow/type_fwd.h"  // IWYU pragma: export
+#include "arrow/status.h"    // IWYU pragma: export
+#include "arrow/type_fwd.h"  // IWYU pragma: keep
 #include "arrow/util/visibility.h"
 
-namespace rj = rapidjson;
+namespace rj = arrow::rapidjson;
 using RjWriter = rj::Writer<rj::StringBuffer>;
 using RjArray = rj::Value::ConstArray;
 using RjObject = rj::Value::ConstObject;
 
-#define RETURN_NOT_FOUND(TOK, NAME, PARENT) \
-  if (NAME == (PARENT).MemberEnd()) {       \
-    std::stringstream ss;                   \
-    ss << "field " << TOK << " not found";  \
-    return Status::Invalid(ss.str());       \
+#define RETURN_NOT_FOUND(TOK, NAME, PARENT)              \
+  if (NAME == (PARENT).MemberEnd()) {                    \
+    return Status::Invalid("field ", TOK, " not found"); \
   }
 
-#define RETURN_NOT_STRING(TOK, NAME, PARENT) \
-  RETURN_NOT_FOUND(TOK, NAME, PARENT);       \
-  if (!NAME->value.IsString()) {             \
-    std::stringstream ss;                    \
-    ss << "field was not a string"           \
-       << " line " << __LINE__;              \
-    return Status::Invalid(ss.str());        \
+#define RETURN_NOT_STRING(TOK, NAME, PARENT)                          \
+  RETURN_NOT_FOUND(TOK, NAME, PARENT);                                \
+  if (!NAME->value.IsString()) {                                      \
+    return Status::Invalid("field was not a string line ", __LINE__); \
   }
 
-#define RETURN_NOT_BOOL(TOK, NAME, PARENT) \
-  RETURN_NOT_FOUND(TOK, NAME, PARENT);     \
-  if (!NAME->value.IsBool()) {             \
-    std::stringstream ss;                  \
-    ss << "field was not a boolean"        \
-       << " line " << __LINE__;            \
-    return Status::Invalid(ss.str());      \
+#define RETURN_NOT_BOOL(TOK, NAME, PARENT)                             \
+  RETURN_NOT_FOUND(TOK, NAME, PARENT);                                 \
+  if (!NAME->value.IsBool()) {                                         \
+    return Status::Invalid("field was not a boolean line ", __LINE__); \
   }
 
-#define RETURN_NOT_INT(TOK, NAME, PARENT) \
-  RETURN_NOT_FOUND(TOK, NAME, PARENT);    \
-  if (!NAME->value.IsInt()) {             \
-    std::stringstream ss;                 \
-    ss << "field was not an int"          \
-       << " line " << __LINE__;           \
-    return Status::Invalid(ss.str());     \
+#define RETURN_NOT_INT(TOK, NAME, PARENT)                           \
+  RETURN_NOT_FOUND(TOK, NAME, PARENT);                              \
+  if (!NAME->value.IsInt()) {                                       \
+    return Status::Invalid("field was not an int line ", __LINE__); \
   }
 
-#define RETURN_NOT_ARRAY(TOK, NAME, PARENT) \
-  RETURN_NOT_FOUND(TOK, NAME, PARENT);      \
-  if (!NAME->value.IsArray()) {             \
-    std::stringstream ss;                   \
-    ss << "field was not an array"          \
-       << " line " << __LINE__;             \
-    return Status::Invalid(ss.str());       \
+#define RETURN_NOT_ARRAY(TOK, NAME, PARENT)                           \
+  RETURN_NOT_FOUND(TOK, NAME, PARENT);                                \
+  if (!NAME->value.IsArray()) {                                       \
+    return Status::Invalid("field was not an array line ", __LINE__); \
   }
 
-#define RETURN_NOT_OBJECT(TOK, NAME, PARENT) \
-  RETURN_NOT_FOUND(TOK, NAME, PARENT);       \
-  if (!NAME->value.IsObject()) {             \
-    std::stringstream ss;                    \
-    ss << "field was not an object"          \
-       << " line " << __LINE__;              \
-    return Status::Invalid(ss.str());        \
+#define RETURN_NOT_OBJECT(TOK, NAME, PARENT)                           \
+  RETURN_NOT_FOUND(TOK, NAME, PARENT);                                 \
+  if (!NAME->value.IsObject()) {                                       \
+    return Status::Invalid("field was not an object line ", __LINE__); \
   }
 
 namespace arrow {
@@ -95,21 +89,25 @@ namespace ipc {
 namespace internal {
 namespace json {
 
-Status WriteSchema(const Schema& schema, RjWriter* writer);
-Status WriteRecordBatch(const RecordBatch& batch, RjWriter* writer);
-Status WriteArray(const std::string& name, const Array& array, RjWriter* writer);
+ARROW_EXPORT Status WriteSchema(const Schema& schema, RjWriter* writer);
+ARROW_EXPORT Status WriteRecordBatch(const RecordBatch& batch, RjWriter* writer);
+ARROW_EXPORT Status WriteArray(const std::string& name, const Array& array,
+                               RjWriter* writer);
 
-Status ReadSchema(const rj::Value& json_obj, MemoryPool* pool,
-                  std::shared_ptr<Schema>* schema);
+ARROW_EXPORT Status ReadSchema(const rj::Value& json_obj, MemoryPool* pool,
+                               std::shared_ptr<Schema>* schema);
 
-Status ReadRecordBatch(const rj::Value& json_obj, const std::shared_ptr<Schema>& schema,
-                       MemoryPool* pool, std::shared_ptr<RecordBatch>* batch);
+ARROW_EXPORT Status ReadRecordBatch(const rj::Value& json_obj,
+                                    const std::shared_ptr<Schema>& schema,
+                                    MemoryPool* pool,
+                                    std::shared_ptr<RecordBatch>* batch);
 
-Status ReadArray(MemoryPool* pool, const rj::Value& json_obj,
-                 const std::shared_ptr<DataType>& type, std::shared_ptr<Array>* array);
+ARROW_EXPORT Status ReadArray(MemoryPool* pool, const rj::Value& json_obj,
+                              const std::shared_ptr<DataType>& type,
+                              std::shared_ptr<Array>* array);
 
-Status ReadArray(MemoryPool* pool, const rj::Value& json_obj, const Schema& schema,
-                 std::shared_ptr<Array>* array);
+ARROW_EXPORT Status ReadArray(MemoryPool* pool, const rj::Value& json_obj,
+                              const Schema& schema, std::shared_ptr<Array>* array);
 
 }  // namespace json
 }  // namespace internal

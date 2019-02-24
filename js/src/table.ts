@@ -15,330 +15,255 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import { Data } from './data';
+import { Column } from './column';
+import { Schema, Field } from './schema';
+import { isPromise } from './util/compat';
 import { RecordBatch } from './recordbatch';
-import { Col, Predicate } from './predicate';
-import { Schema, Field, Struct } from './type';
-import { read, readAsync } from './ipc/reader/arrow';
-import { isPromise, isAsyncIterable } from './util/compat';
-import { Vector, DictionaryVector, IntVector, StructVector } from './vector';
-import { ChunkedView } from './vector/chunked';
+import { DataFrame } from './compute/dataframe';
+import { RecordBatchReader } from './ipc/reader';
+import { Vector, Chunked } from './vector/index';
+import { DataType, RowLike, Struct } from './type';
+import { Clonable, Sliceable, Applicative } from './vector';
+import { selectColumnArgs, selectArgs } from './util/args';
+import { distributeColumnsIntoRecordBatches } from './util/recordbatch';
+import { distributeVectorsIntoRecordBatches } from './util/recordbatch';
+import { RecordBatchFileWriter, RecordBatchStreamWriter } from './ipc/writer';
 
-export type NextFunc = (idx: number, batch: RecordBatch) => void;
-export type BindFunc = (batch: RecordBatch) => void;
+type VectorMap = { [key: string]: Vector };
+type Fields<T extends { [key: string]: DataType }> = (keyof T)[] | Field<T[keyof T]>[];
+type ChildData<T extends { [key: string]: DataType }> = Data<T[keyof T]>[] | Vector<T[keyof T]>[];
+type Columns<T extends { [key: string]: DataType }> = Column<T[keyof T]>[] | Column<T[keyof T]>[][];
 
-export interface DataFrame {
-    filter(predicate: Predicate): DataFrame;
-    scan(next: NextFunc, bind?: BindFunc): void;
-    count(): number;
-    countBy(col: (Col|string)): CountByResult;
+export interface Table<T extends { [key: string]: DataType } = any> {
+
+    get(index: number): Struct<T>['TValue'];
+    [Symbol.iterator](): IterableIterator<RowLike<T>>;
+
+    slice(begin?: number, end?: number): Table<T>;
+    concat(...others: Vector<Struct<T>>[]): Table<T>;
+    clone(chunks?: RecordBatch<T>[], offsets?: Uint32Array): Table<T>;
+
+    scan(next: import('./compute/dataframe').NextFunc, bind?: import('./compute/dataframe').BindFunc): void;
+    countBy(name: import('./compute/predicate').Col | string): import('./compute/dataframe').CountByResult;
+    filter(predicate: import('./compute/predicate').Predicate): import('./compute/dataframe').FilteredDataFrame<T>;
 }
 
-export class Table implements DataFrame {
-    static empty() { return new Table(new Schema([]), []); }
-    static from(sources?: Iterable<Uint8Array | Buffer | string> | object | string) {
-        if (sources) {
-            let schema: Schema | undefined;
-            let recordBatches: RecordBatch[] = [];
-            for (let recordBatch of read(sources)) {
-                schema = schema || recordBatch.schema;
-                recordBatches.push(recordBatch);
-            }
-            return new Table(schema || new Schema([]), recordBatches);
+export class Table<T extends { [key: string]: DataType } = any>
+    extends Chunked<Struct<T>>
+    implements DataFrame<T>,
+               Clonable<Table<T>>,
+               Sliceable<Table<T>>,
+               Applicative<Struct<T>, Table<T>> {
+
+    /** @nocollapse */
+    public static empty<T extends { [key: string]: DataType } = any>() { return new Table<T>(new Schema([]), []); }
+
+    public static from<T extends { [key: string]: DataType } = any>(): Table<T>;
+    public static from<T extends { [key: string]: DataType } = any>(source: RecordBatchReader<T>): Table<T>;
+    public static from<T extends { [key: string]: DataType } = any>(source: import('./ipc/reader').FromArg0): Table<T>;
+    public static from<T extends { [key: string]: DataType } = any>(source: import('./ipc/reader').FromArg2): Table<T>;
+    public static from<T extends { [key: string]: DataType } = any>(source: import('./ipc/reader').FromArg1): Promise<Table<T>>;
+    public static from<T extends { [key: string]: DataType } = any>(source: import('./ipc/reader').FromArg3): Promise<Table<T>>;
+    public static from<T extends { [key: string]: DataType } = any>(source: import('./ipc/reader').FromArg4): Promise<Table<T>>;
+    public static from<T extends { [key: string]: DataType } = any>(source: import('./ipc/reader').FromArg5): Promise<Table<T>>;
+    public static from<T extends { [key: string]: DataType } = any>(source: PromiseLike<RecordBatchReader<T>>): Promise<Table<T>>;
+    /** @nocollapse */
+    public static from<T extends { [key: string]: DataType } = any>(source?: any) {
+
+        if (!source) { return Table.empty<T>(); }
+
+        let reader = RecordBatchReader.from<T>(source) as RecordBatchReader<T> | Promise<RecordBatchReader<T>>;
+
+        if (isPromise<RecordBatchReader<T>>(reader)) {
+            return (async () => await Table.from(await reader))();
         }
-        return Table.empty();
-    }
-    static async fromAsync(sources?: AsyncIterable<Uint8Array | Buffer | string>) {
-        if (isAsyncIterable(sources)) {
-            let schema: Schema | undefined;
-            let recordBatches: RecordBatch[] = [];
-            for await (let recordBatch of readAsync(sources)) {
-                schema = schema || recordBatch.schema;
-                recordBatches.push(recordBatch);
-            }
-            return new Table(schema || new Schema([]), recordBatches);
-        } else if (isPromise(sources)) {
-            return Table.from(await sources);
-        } else if (sources) {
-            return Table.from(sources);
+        if (reader.isSync() && (reader = reader.open())) {
+            return !reader.schema ? Table.empty<T>() : new Table<T>(reader.schema, [...reader]);
         }
-        return Table.empty();
-    }
-    static fromStruct(struct: StructVector) {
-        const schema = new Schema(struct.type.children);
-        const chunks = struct.view instanceof ChunkedView ?
-                            (struct.view.chunkVectors as StructVector[]) :
-                            [struct];
-        return new Table(chunks.map((chunk) => new RecordBatch(schema, chunk.length, chunk.view.childData)));
+        return (async (opening) => {
+            const reader = await opening;
+            const schema = reader.schema;
+            const batches: RecordBatch[] = [];
+            if (schema) {
+                for await (let batch of reader) {
+                    batches.push(batch);
+                }
+                return new Table<T>(schema, batches);
+            }
+            return Table.empty<T>();
+        })(reader.open());
     }
 
-    public readonly schema: Schema;
-    public readonly length: number;
-    public readonly numCols: number;
-    // List of inner RecordBatches
-    public readonly batches: RecordBatch[];
-    // List of inner Vectors, possibly spanning batches
-    protected readonly _columns: Vector<any>[] = [];
-    // Union of all inner RecordBatches into one RecordBatch, possibly chunked.
-    // If the Table has just one inner RecordBatch, this points to that.
-    // If the Table has multiple inner RecordBatches, then this is a Chunked view
-    // over the list of RecordBatches. This allows us to delegate the responsibility
-    // of indexing, iterating, slicing, and visiting to the Nested/Chunked Data/Views.
-    public readonly batchesUnion: RecordBatch;
+    /** @nocollapse */
+    public static async fromAsync<T extends { [key: string]: DataType } = any>(source: import('./ipc/reader').FromArgs): Promise<Table<T>> {
+        return await Table.from<T>(source as any);
+    }
 
-    constructor(batches: RecordBatch[]);
-    constructor(...batches: RecordBatch[]);
-    constructor(schema: Schema, batches: RecordBatch[]);
-    constructor(schema: Schema, ...batches: RecordBatch[]);
+    /** @nocollapse */
+    public static fromStruct<T extends { [key: string]: DataType } = any>(struct: Vector<Struct<T>>) {
+        return Table.new<T>(struct.data.childData as Data<T[keyof T]>[], struct.type.children);
+    }
+
+    /**
+     * @summary Create a new Table from a collection of Columns or Vectors,
+     * with an optional list of names or Fields.
+     *
+     *
+     * `Table.new` accepts an Object of
+     * Columns or Vectors, where the keys will be used as the field names
+     * for the Schema:
+     * ```ts
+     * const i32s = Int32Vector.from([1, 2, 3]);
+     * const f32s = Float32Vector.from([.1, .2, .3]);
+     * const table = Table.new({ i32: i32s, f32: f32s });
+     * assert(table.schema.fields[0].name === 'i32');
+     * ```
+     *
+     * It also accepts a a list of Vectors with an optional list of names or
+     * Fields for the resulting Schema. If the list is omitted or a name is
+     * missing, the numeric index of each Vector will be used as the name:
+     * ```ts
+     * const i32s = Int32Vector.from([1, 2, 3]);
+     * const f32s = Float32Vector.from([.1, .2, .3]);
+     * const table = Table.new([i32s, f32s], ['i32']);
+     * assert(table.schema.fields[0].name === 'i32');
+     * assert(table.schema.fields[1].name === '1');
+     * ```
+     *
+     * If the supplied arguments are Columns, `Table.new` will infer the Schema
+     * from the Columns:
+     * ```ts
+     * const i32s = Column.new('i32', Int32Vector.from([1, 2, 3]));
+     * const f32s = Column.new('f32', Float32Vector.from([.1, .2, .3]));
+     * const table = Table.new(i32s, f32s);
+     * assert(table.schema.fields[0].name === 'i32');
+     * assert(table.schema.fields[1].name === 'f32');
+     * ```
+     *
+     * If the supplied Vector or Column lengths are unequal, `Table.new` will
+     * extend the lengths of the shorter Columns, allocating additional bytes
+     * to represent the additional null slots. The memory required to allocate
+     * these additional bitmaps can be computed as:
+     * ```ts
+     * let additionalBytes = 0;
+     * for (let vec in shorter_vectors) {
+     *     additionalBytes += (((longestLength - vec.length) + 63) & ~63) >> 3;
+     * }
+     * ```
+     *
+     * For example, an additional null bitmap for one million null values would require
+     * 125,000 bytes (`((1e6 + 63) & ~63) >> 3`), or approx. `0.11MiB`
+     */
+    public static new<T extends { [key: string]: DataType } = any>(...columns: Columns<T>): Table<T>;
+    public static new<T extends VectorMap = any>(children: T): Table<{ [P in keyof T]: T[P]['type'] }>;
+    public static new<T extends { [key: string]: DataType } = any>(children: ChildData<T>, fields?: Fields<T>): Table<T>;
+    /** @nocollapse */
+    public static new(...cols: any[]) {
+        return new Table(...distributeColumnsIntoRecordBatches(selectColumnArgs(cols)));
+    }
+
+    constructor(batches: RecordBatch<T>[]);
+    constructor(...batches: RecordBatch<T>[]);
+    constructor(schema: Schema<T>, batches: RecordBatch<T>[]);
+    constructor(schema: Schema<T>, ...batches: RecordBatch<T>[]);
     constructor(...args: any[]) {
-        let schema: Schema;
-        let batches: RecordBatch[];
-        if (args[0] instanceof Schema) {
-            schema = args[0];
-            batches = Array.isArray(args[1][0]) ? args[1][0] : args[1];
-        } else if (args[0] instanceof RecordBatch) {
-            schema = (batches = args)[0].schema;
-        } else {
-            schema = (batches = args[0])[0].schema;
-        }
-        this.schema = schema;
-        this.batches = batches;
-        this.batchesUnion = batches.length == 0 ?
-            new RecordBatch(schema, 0, []) :
-            batches.reduce((union, batch) => union.concat(batch));
-        this.length = this.batchesUnion.length;
-        this.numCols = this.batchesUnion.numCols;
-    }
-    public get(index: number): Struct['TValue'] {
-        return this.batchesUnion.get(index)!;
-    }
-    public getColumn(name: string) {
-        return this.getColumnAt(this.getColumnIndex(name));
-    }
-    public getColumnAt(index: number) {
-        return index < 0 || index >= this.numCols
-            ? null
-            : this._columns[index] || (
-              this._columns[index] = this.batchesUnion.getChildAt(index)!);
-    }
-    public getColumnIndex(name: string) {
-        return this.schema.fields.findIndex((f) => f.name === name);
-    }
-    public [Symbol.iterator](): IterableIterator<Struct['TValue']> {
-        return this.batchesUnion[Symbol.iterator]() as any;
-    }
-    public filter(predicate: Predicate): DataFrame {
-        return new FilteredDataFrame(this.batches, predicate);
-    }
-    public scan(next: NextFunc, bind?: BindFunc) {
-        const batches = this.batches, numBatches = batches.length;
-        for (let batchIndex = -1; ++batchIndex < numBatches;) {
-            // load batches
-            const batch = batches[batchIndex];
-            if (bind) { bind(batch); }
-            // yield all indices
-            for (let index = -1, numRows = batch.length; ++index < numRows;) {
-                next(index, batch);
-            }
-        }
-    }
-    public count(): number { return this.length; }
-    public countBy(name: Col | string): CountByResult {
-        const batches = this.batches, numBatches = batches.length;
-        const count_by = typeof name === 'string' ? new Col(name) : name;
-        // Assume that all dictionary batches are deltas, which means that the
-        // last record batch has the most complete dictionary
-        count_by.bind(batches[numBatches - 1]);
-        const vector = count_by.vector as DictionaryVector;
-        if (!(vector instanceof DictionaryVector)) {
-            throw new Error('countBy currently only supports dictionary-encoded columns');
-        }
-        // TODO: Adjust array byte width based on overall length
-        // (e.g. if this.length <= 255 use Uint8Array, etc...)
-        const counts: Uint32Array = new Uint32Array(vector.dictionary.length);
-        for (let batchIndex = -1; ++batchIndex < numBatches;) {
-            // load batches
-            const batch = batches[batchIndex];
-            // rebind the countBy Col
-            count_by.bind(batch);
-            const keys = (count_by.vector as DictionaryVector).indices;
-            // yield all indices
-            for (let index = -1, numRows = batch.length; ++index < numRows;) {
-                let key = keys.get(index);
-                if (key !== null) { counts[key]++; }
-            }
-        }
-        return new CountByResult(vector.dictionary, IntVector.from(counts));
-    }
-    public select(...columnNames: string[]) {
-        return new Table(this.batches.map((batch) => batch.select(...columnNames)));
-    }
-    public toString(separator?: string) {
-        let str = '';
-        for (const row of this.rowsToString(separator)) {
-            str += row + '\n';
-        }
-        return str;
-    }
-    public rowsToString(separator = ' | '): TableToStringIterator {
-        return new TableToStringIterator(tableRowsToString(this, separator));
-    }
-}
 
-class FilteredDataFrame implements DataFrame {
-    private predicate: Predicate;
-    private batches: RecordBatch[];
-    constructor (batches: RecordBatch[], predicate: Predicate) {
-        this.batches = batches;
-        this.predicate = predicate;
+        let schema: Schema = null!;
+
+        if (args[0] instanceof Schema) { schema = args.shift(); }
+
+        let chunks = selectArgs<RecordBatch<T>>(RecordBatch, args);
+
+        if (!schema && !(schema = chunks[0] && chunks[0].schema)) {
+            throw new TypeError('Table must be initialized with a Schema or at least one RecordBatch');
+        }
+
+        if (!chunks[0]) { chunks[0] = new RecordBatch(schema, 0, []); }
+
+        super(chunks[0].type, chunks);
+
+        this._schema = schema;
+        this._chunks = chunks;
     }
-    public scan(next: NextFunc, bind?: BindFunc) {
-        // inlined version of this:
-        // this.parent.scan((idx, columns) => {
-        //     if (this.predicate(idx, columns)) next(idx, columns);
-        // });
-        const batches = this.batches;
-        const numBatches = batches.length;
-        for (let batchIndex = -1; ++batchIndex < numBatches;) {
-            // load batches
-            const batch = batches[batchIndex];
-            // TODO: bind batches lazily
-            // If predicate doesn't match anything in the batch we don't need
-            // to bind the callback
-            if (bind) { bind(batch); }
-            const predicate = this.predicate.bind(batch);
-            // yield all indices
-            for (let index = -1, numRows = batch.length; ++index < numRows;) {
-                if (predicate(index, batch)) { next(index, batch); }
+
+    protected _schema: Schema<T>;
+    // List of inner RecordBatches
+    protected _chunks: RecordBatch<T>[];
+    protected _children?: Column<T[keyof T]>[];
+
+    public get schema() { return this._schema; }
+    public get length() { return this._length; }
+    public get chunks() { return this._chunks; }
+    public get numCols() { return this._numChildren; }
+
+    public clone(chunks = this._chunks) {
+        return new Table<T>(this._schema, chunks);
+    }
+
+    public getColumn<R extends keyof T>(name: R): Column<T[R]> {
+        return this.getColumnAt(this.getColumnIndex(name)) as Column<T[R]>;
+    }
+    public getColumnAt<R extends DataType = any>(index: number): Column<R> | null {
+        return this.getChildAt(index);
+    }
+    public getColumnIndex<R extends keyof T>(name: R) {
+        return this._schema.fields.findIndex((f) => f.name === name);
+    }
+    public getChildAt<R extends DataType = any>(index: number): Column<R> | null {
+        if (index < 0 || index >= this.numChildren) { return null; }
+        let field: Field<R>, child: Column<R>;
+        const fields = (this._schema as Schema<any>).fields;
+        const columns = this._children || (this._children = []) as Column[];
+        if (child = columns[index]) { return child as Column<R>; }
+        if (field = fields[index]) {
+            const chunks = this._chunks
+                .map((chunk) => chunk.getChildAt<R>(index))
+                .filter((vec): vec is Vector<R> => vec != null);
+            if (chunks.length > 0) {
+                return (columns[index] = new Column<R>(field, chunks));
             }
         }
+        return null;
+    }
+
+    // @ts-ignore
+    public serialize(encoding = 'binary', stream = true) {
+        const writer = !stream
+            ? RecordBatchFileWriter
+            : RecordBatchStreamWriter;
+        return writer.writeAll(this._chunks).toUint8Array(true);
     }
     public count(): number {
-        // inlined version of this:
-        // let sum = 0;
-        // this.parent.scan((idx, columns) => {
-        //     if (this.predicate(idx, columns)) ++sum;
-        // });
-        // return sum;
-        let sum = 0;
-        const batches = this.batches;
-        const numBatches = batches.length;
-        for (let batchIndex = -1; ++batchIndex < numBatches;) {
-            // load batches
-            const batch = batches[batchIndex];
-            const predicate = this.predicate.bind(batch);
-            // yield all indices
-            for (let index = -1, numRows = batch.length; ++index < numRows;) {
-                if (predicate(index, batch)) { ++sum; }
-            }
-        }
-        return sum;
+        return this._length;
     }
-    public filter(predicate: Predicate): DataFrame {
-        return new FilteredDataFrame(
-            this.batches,
-            this.predicate.and(predicate)
-        );
+    public select<K extends keyof T = any>(...columnNames: K[]) {
+        const nameToIndex = this._schema.fields.reduce((m, f, i) => m.set(f.name as K, i), new Map<K, number>());
+        return this.selectAt(...columnNames.map((columnName) => nameToIndex.get(columnName)!).filter((x) => x > -1));
     }
-    public countBy(name: Col | string): CountByResult {
-        const batches = this.batches, numBatches = batches.length;
-        const count_by = typeof name === 'string' ? new Col(name) : name;
-        // Assume that all dictionary batches are deltas, which means that the
-        // last record batch has the most complete dictionary
-        count_by.bind(batches[numBatches - 1]);
-        const vector = count_by.vector as DictionaryVector;
-        if (!(vector instanceof DictionaryVector)) {
-            throw new Error('countBy currently only supports dictionary-encoded columns');
-        }
-        // TODO: Adjust array byte width based on overall length
-        // (e.g. if this.length <= 255 use Uint8Array, etc...)
-        const counts: Uint32Array = new Uint32Array(vector.dictionary.length);
-        for (let batchIndex = -1; ++batchIndex < numBatches;) {
-            // load batches
-            const batch = batches[batchIndex];
-            const predicate = this.predicate.bind(batch);
-            // rebind the countBy Col
-            count_by.bind(batch);
-            const keys = (count_by.vector as DictionaryVector).indices;
-            // yield all indices
-            for (let index = -1, numRows = batch.length; ++index < numRows;) {
-                let key = keys.get(index);
-                if (key !== null && predicate(index, batch)) { counts[key]++; }
-            }
-        }
-        return new CountByResult(vector.dictionary, IntVector.from(counts));
+    public selectAt<K extends T[keyof T] = any>(...columnIndices: number[]) {
+        const schema = this._schema.selectAt<K>(...columnIndices);
+        return new Table(schema, this._chunks.map(({ length, data: { childData } }) => {
+            return new RecordBatch(schema, length, columnIndices.map((i) => childData[i]).filter(Boolean));
+        }));
     }
-}
+    public assign<R extends { [key: string]: DataType } = any>(other: Table<R>) {
 
-export class CountByResult extends Table implements DataFrame {
-    constructor(values: Vector, counts: IntVector<any>) {
-        super(
-            new RecordBatch(new Schema([
-                new Field('values', values.type),
-                new Field('counts', counts.type)
-            ]),
-            counts.length, [values, counts]
-        ));
-    }
-    public toJSON(): Object {
-        const values = this.getColumnAt(0)!;
-        const counts = this.getColumnAt(1)!;
-        const result = {} as { [k: string]: number | null };
-        for (let i = -1; ++i < this.length;) {
-            result[values.get(i)] = counts.get(i);
-        }
-        return result;
-    }
-}
+        const fields = this._schema.fields;
+        const [indices, oldToNew] = other.schema.fields.reduce((memo, f2, newIdx) => {
+            const [indices, oldToNew] = memo;
+            const i = fields.findIndex((f) => f.compareTo(f2));
+            ~i ? (oldToNew[i] = newIdx) : indices.push(newIdx);
+            return memo;
+        }, [[], []] as number[][]);
 
-export class TableToStringIterator implements IterableIterator<string> {
-    constructor(private iterator: IterableIterator<string>) {}
-    [Symbol.iterator]() { return this.iterator; }
-    next(value?: any) { return this.iterator.next(value); }
-    throw(error?: any) { return this.iterator.throw && this.iterator.throw(error) || { done: true, value: '' }; }
-    return(value?: any) { return this.iterator.return && this.iterator.return(value) || { done: true, value: '' }; }
-    pipe(stream: NodeJS.WritableStream) {
-        let res: IteratorResult<string>;
-        let write = () => {
-            if (stream['writable']) {
-                do {
-                    if ((res = this.next()).done) { break; }
-                } while (stream['write'](res.value + '\n', 'utf8'));
-            }
-            if (!res || !res.done) {
-                stream['once']('drain', write);
-            } else if (!(stream as any)['isTTY']) {
-                stream['end']('\n');
-            }
-        };
-        write();
-    }
-}
+        const schema = this._schema.assign(other.schema);
+        const columns = [
+            ...fields.map((_f, i, _fs, j = oldToNew[i]) =>
+                (j === undefined ? this.getColumnAt(i) : other.getColumnAt(j))!),
+            ...indices.map((i) => other.getColumnAt(i)!)
+        ].filter(Boolean) as Column<(T & R)[keyof T | keyof R]>[];
 
-function* tableRowsToString(table: Table, separator = ' | ') {
-    const fields = table.schema.fields;
-    const header = ['row_id', ...fields.map((f) => `${f}`)].map(stringify);
-    const maxColumnWidths = header.map(x => x.length);
-    // Pass one to convert to strings and count max column widths
-    for (let i = -1, n = table.length - 1; ++i < n;) {
-        let val, row = [i, ...table.get(i)];
-        for (let j = -1, k = row.length; ++j < k; ) {
-            val = stringify(row[j]);
-            maxColumnWidths[j] = Math.max(maxColumnWidths[j], val.length);
-        }
+        return new Table(...distributeVectorsIntoRecordBatches<T & R>(schema, columns));
     }
-    yield header.map((x, j) => leftPad(x, ' ', maxColumnWidths[j])).join(separator);
-    for (let i = -1; ++i < table.length;) {
-        yield [i, ...table.get(i)]
-            .map((x) => stringify(x))
-            .map((x, j) => leftPad(x, ' ', maxColumnWidths[j]))
-            .join(separator);
-    }
-}
-
-function leftPad(str: string, fill: string, n: number) {
-    return (new Array(n + 1).join(fill) + str).slice(-1 * n);
-}
-
-function stringify(x: any) {
-    return typeof x === 'string' ? `"${x}"` : ArrayBuffer.isView(x) ? `[${x}]` : JSON.stringify(x);
 }

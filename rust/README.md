@@ -19,47 +19,44 @@
 
 # Native Rust implementation of Apache Arrow
 
-## Status
+## The Rust implementation of Arrow consists of the following crates
 
-This is a starting point for a native Rust implementation of Arrow.
+| Crate     | Description | Documentation |
+|-----------|-------------|---------------|
+|Arrow      | Core functionality (memory layout, array builders, low level computations) | [(README)](arrow/README.md) |
+|Parquet    | Parquet support | [(README)](parquet/README.md) |
+|DataFusion | In-memory query engine with SQL support | [(README)](datafusion/README.md) |
 
-The current code demonstrates arrays of primitive types and structs.
+## Prerequisites
 
-## Creating an Array from a Vec
+Before running tests and examples it is necessary to set up the local development enviroment.
 
-```rust
-// create a memory-aligned Arrow array from an existing Vec
-let array = Array::from(vec![1,2,3,4,5]);
+### Git Submodules
 
-match array.data() {
-    &ArrayData::Int32(ref buffer) => {
-        println!("array contents: {:?}", buffer.iter().collect::<Vec<i32>>());
-    }
-    _ => {}
-}
-```
+The tests rely on test data that is contained in git submodules.
 
-## Creating an Array from a Builder
-
-```rust
-let mut builder: Builder<i32> = Builder::new();
-for i in 0..10 {
-    builder.push(i);
-}
-let buffer = builder.finish();
-let array = Array::from(buffer);
-```
-
-## Run Examples
-
-Examples can be run using the `cargo run --example` command. For example:
+To pull down this data run the following:
 
 ```bash
-cargo run --example array_from_builder
+git submodule update --init
 ```
 
-## Run Tests
+This populates data in two git submodules:
+
+- `cpp/submodules/parquet_testing/data` (sourced from https://github.com/apache/parquet-testing.git)
+- `testing` (sourced from https://github.com/apache/arrow-testing)
+
+Create a new environment variable called `PARQUET_TEST_DATA` to point
+to `cpp/submodules/parquet_testing/data` and then `cargo test` as usual.
+
+## Code Formatting
+
+Our CI uses `rustfmt` to check code formatting.  Although the project is
+built and tested against nightly rust we use the stable version of
+`rustfmt`.  So before submitting a PR be sure to run the following
+and check for lint issues:
 
 ```bash
-cargo test
+cargo +stable fmt --all -- --check
 ```
+

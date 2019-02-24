@@ -16,9 +16,10 @@
 # under the License.
 
 # distutils: language = c++
+# cython: language_level = 3
 
 from pyarrow.includes.common cimport *
-from pyarrow.includes.libarrow cimport (CArray, CSchema, CStatus,
+from pyarrow.includes.libarrow cimport (CChunkedArray, CSchema, CStatus,
                                         CTable, CMemoryPool,
                                         CKeyValueMetadata,
                                         RandomAccessFile, OutputStream,
@@ -101,6 +102,8 @@ cdef extern from "parquet/api/schema.h" namespace "parquet" nogil:
         ParquetCompression_GZIP" parquet::Compression::GZIP"
         ParquetCompression_LZO" parquet::Compression::LZO"
         ParquetCompression_BROTLI" parquet::Compression::BROTLI"
+        ParquetCompression_LZ4" parquet::Compression::LZ4"
+        ParquetCompression_ZSTD" parquet::Compression::ZSTD"
 
     enum ParquetVersion" parquet::ParquetVersion::type":
         ParquetVersion_V1" parquet::ParquetVersion::PARQUET_1_0"
@@ -132,7 +135,7 @@ cdef extern from "parquet/api/schema.h" namespace "parquet" nogil:
         c_bool Equals(const SchemaDescriptor& other)
         int num_columns()
 
-    cdef c_string FormatStatValue(ParquetType parquet_type, const char* val)
+    cdef c_string FormatStatValue(ParquetType parquet_type, c_string val)
 
 
 cdef extern from "parquet/api/reader.h" namespace "parquet" nogil:
@@ -197,7 +200,7 @@ cdef extern from "parquet/api/reader.h" namespace "parquet" nogil:
         ParquetCompression compression() const
         const vector[ParquetEncoding]& encodings() const
 
-        bint has_dictionary_page() const
+        int64_t has_dictionary_page() const
         int64_t dictionary_page_offset() const
         int64_t data_page_offset() const
         int64_t index_page_offset() const
@@ -269,8 +272,8 @@ cdef extern from "parquet/arrow/reader.h" namespace "parquet::arrow" nogil:
 
     cdef cppclass FileReader:
         FileReader(CMemoryPool* pool, unique_ptr[ParquetFileReader] reader)
-        CStatus ReadColumn(int i, shared_ptr[CArray]* out)
-        CStatus ReadSchemaField(int i, shared_ptr[CArray]* out)
+        CStatus ReadColumn(int i, shared_ptr[CChunkedArray]* out)
+        CStatus ReadSchemaField(int i, shared_ptr[CChunkedArray]* out)
 
         int num_row_groups()
         CStatus ReadRowGroup(int i, shared_ptr[CTable]* out)
@@ -286,7 +289,7 @@ cdef extern from "parquet/arrow/reader.h" namespace "parquet::arrow" nogil:
 
         const ParquetFileReader* parquet_reader()
 
-        void set_num_threads(int num_threads)
+        void set_use_threads(c_bool use_threads)
 
 
 cdef extern from "parquet/arrow/schema.h" namespace "parquet::arrow" nogil:
@@ -321,5 +324,7 @@ cdef extern from "parquet/arrow/writer.h" namespace "parquet::arrow" nogil:
             Builder* disable_deprecated_int96_timestamps()
             Builder* enable_deprecated_int96_timestamps()
             Builder* coerce_timestamps(TimeUnit unit)
+            Builder* allow_truncated_timestamps()
+            Builder* disallow_truncated_timestamps()
             shared_ptr[ArrowWriterProperties] build()
         c_bool support_deprecated_int96_timestamps()

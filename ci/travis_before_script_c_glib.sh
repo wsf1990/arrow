@@ -21,41 +21,31 @@ set -ex
 
 source $TRAVIS_BUILD_DIR/ci/travis_env_common.sh
 
-if [ $TRAVIS_OS_NAME = "linux" ]; then
-  sudo apt-get install -y -q gtk-doc-tools autoconf-archive libgirepository1.0-dev
-fi
+source $TRAVIS_BUILD_DIR/ci/travis_install_conda.sh
+
+conda create -n meson -y -q python=3.6
+conda activate meson
+
+pip install meson
 
 if [ $TRAVIS_OS_NAME = "osx" ]; then
   export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/opt/libffi/lib/pkgconfig
   export XML_CATALOG_FILES=/usr/local/etc/xml/catalog
-fi
-
-if [ $BUILD_SYSTEM = "meson" ]; then
-  source $TRAVIS_BUILD_DIR/ci/travis_install_conda.sh
-  pip install meson ninja
+else
+  sudo apt-get install -y -q \
+    autoconf-archive \
+    gtk-doc-tools \
+    libgirepository1.0-dev
+  conda install -q -y ninja
 fi
 
 gem install test-unit gobject-introspection
 
 if [ $TRAVIS_OS_NAME = "osx" ]; then
   sudo env PKG_CONFIG_PATH=$PKG_CONFIG_PATH luarocks install lgi
-elif [ $BUILD_SYSTEM = "autotools" ]; then
-  if [ $BUILD_TORCH_EXAMPLE = "yes" ]; then
-    git clone \
-      --quiet \
-      --depth 1 \
-      --recursive \
-      https://github.com/torch/distro.git ~/torch
-    pushd ~/torch
-    ./install-deps > /dev/null
-    echo "yes" | ./install.sh > /dev/null
-    . ~/torch/install/bin/torch-activate
-    popd
-    luarocks install lgi
-  else
-    sudo apt install -y -qq luarocks
-    sudo luarocks install lgi
-  fi
+else
+  sudo apt install -y -qq luarocks
+  sudo luarocks install lgi
 fi
 
 pushd $ARROW_C_GLIB_DIR
@@ -63,29 +53,32 @@ pushd $ARROW_C_GLIB_DIR
 export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:$ARROW_CPP_INSTALL/lib/pkgconfig
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$ARROW_CPP_INSTALL/lib
 
-if [ $BUILD_SYSTEM = "autotools" ]; then
-  ./autogen.sh
+# Build with GNU Autotools
+./autogen.sh
+CONFIGURE_OPTIONS="--prefix=$ARROW_C_GLIB_INSTALL_AUTOTOOLS"
+CONFIGURE_OPTIONS="$CONFIGURE_OPTIONS --enable-gtk-doc"
+CONFIGURE_OPTIONS="$CONFIGURE_OPTIONS CFLAGS=-DARROW_NO_DEPRECATED_API"
+CONFIGURE_OPTIONS="$CONFIGURE_OPTIONS CXXFLAGS=-DARROW_NO_DEPRECATED_API"
+mkdir -p build
+pushd build
+../configure $CONFIGURE_OPTIONS
+make -j4
+make install
+popd
+rm -rf build
 
-  CONFIGURE_OPTIONS="--prefix=$ARROW_C_GLIB_INSTALL"
-  CONFIGURE_OPTIONS="$CONFIGURE_OPTIONS --enable-gtk-doc"
-  CONFIGURE_OPTIONS="$CONFIGURE_OPTIONS CFLAGS=-DARROW_NO_DEPRECATED_API"
-  CONFIGURE_OPTIONS="$CONFIGURE_OPTIONS CXXFLAGS=-DARROW_NO_DEPRECATED_API"
-
-  ./configure $CONFIGURE_OPTIONS
-  make -j4
-  make install
-else
-  MESON_OPTIONS="--prefix=$ARROW_C_GLIB_INSTALL"
-  MESON_OPTIONS="$MESON_OPTIONS -Denable_gtk_doc=true"
-  mkdir -p build
-  env \
-    CFLAGS="-DARROW_NO_DEPRECATED_API" \
-    CXXFLAGS="-DARROW_NO_DEPRECATED_API" \
-    meson build $MESON_OPTIONS
-  pushd build
-  ninja
-  ninja install
-  popd
-fi
+# Build with Meson
+MESON_OPTIONS="--prefix=$ARROW_C_GLIB_INSTALL_MESON"
+MESON_OPTIONS="$MESON_OPTIONS -Dgtk_doc=true"
+mkdir -p build
+env \
+  CFLAGS="-DARROW_NO_DEPRECATED_API" \
+  CXXFLAGS="-DARROW_NO_DEPRECATED_API" \
+  meson build $MESON_OPTIONS
+pushd build
+ninja
+ninja install
+popd
+rm -rf build
 
 popd

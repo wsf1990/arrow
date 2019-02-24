@@ -30,13 +30,13 @@
 #include <boost/filesystem.hpp>  // NOLINT
 
 #include "arrow/io/file.h"
-#include "arrow/ipc/json.h"
+#include "arrow/ipc/json-integration.h"
 #include "arrow/ipc/reader.h"
 #include "arrow/ipc/writer.h"
 #include "arrow/pretty_print.h"
 #include "arrow/record_batch.h"
 #include "arrow/status.h"
-#include "arrow/test-util.h"
+#include "arrow/testing/gtest_util.h"
 #include "arrow/type.h"
 
 DEFINE_string(arrow, "", "Arrow file name");
@@ -50,6 +50,9 @@ DEFINE_bool(verbose, true, "Verbose output");
 namespace fs = boost::filesystem;
 
 namespace arrow {
+
+class Buffer;
+
 namespace ipc {
 
 bool file_exists(const char* path) {
@@ -162,10 +165,8 @@ static Status ValidateArrowVsJson(const std::string& arrow_path,
   const int arrow_nbatches = arrow_reader->num_record_batches();
 
   if (json_nbatches != arrow_nbatches) {
-    std::stringstream ss;
-    ss << "Different number of record batches: " << json_nbatches << " (JSON) vs "
-       << arrow_nbatches << " (Arrow)";
-    return Status::Invalid(ss.str());
+    return Status::Invalid("Different number of record batches: ", json_nbatches,
+                           " (JSON) vs ", arrow_nbatches, " (Arrow)");
   }
 
   std::shared_ptr<RecordBatch> arrow_batch;
@@ -223,9 +224,7 @@ Status RunCommand(const std::string& json_path, const std::string& arrow_path,
 
     return ValidateArrowVsJson(arrow_path, json_path);
   } else {
-    std::stringstream ss;
-    ss << "Unknown command: " << command;
-    return Status::Invalid(ss.str());
+    return Status::Invalid("Unknown command: ", command);
   }
 }
 
@@ -254,7 +253,7 @@ class TestJSONIntegration : public ::testing::Test {
 
   void TearDown() {
     for (const std::string path : tmp_paths_) {
-      std::remove(path.c_str());
+      ARROW_UNUSED(std::remove(path.c_str()));
     }
   }
 

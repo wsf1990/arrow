@@ -19,14 +19,15 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import contextlib
+import math
+import multiprocessing
 import os
 import pytest
 import random
-import shutil
 import signal
+import struct
 import subprocess
-import tempfile
+import sys
 import time
 
 import numpy as np
@@ -36,6 +37,8 @@ import pandas as pd
 
 DEFAULT_PLASMA_STORE_MEMORY = 10 ** 8
 USE_VALGRIND = os.getenv("PLASMA_VALGRIND") == "1"
+EXTERNAL_STORE = "hashtable://test"
+SMALL_OBJECT_SIZE = 9000
 
 
 def random_name():
@@ -105,102 +108,36 @@ def assert_get_object_equal(unit_test, client1, client2, object_id,
         assert plasma.buffers_equal(metadata, client1_metadata)
 
 
-@contextlib.contextmanager
-def start_plasma_store(plasma_store_memory=DEFAULT_PLASMA_STORE_MEMORY,
-                       use_valgrind=False, use_profiler=False,
-                       use_one_memory_mapped_file=False,
-                       plasma_directory=None, use_hugepages=False):
-    """Start a plasma store process.
-    Args:
-        use_valgrind (bool): True if the plasma store should be started inside
-            of valgrind. If this is True, use_profiler must be False.
-        use_profiler (bool): True if the plasma store should be started inside
-            a profiler. If this is True, use_valgrind must be False.
-        stdout_file: A file handle opened for writing to redirect stdout to. If
-            no redirection should happen, then this should be None.
-        stderr_file: A file handle opened for writing to redirect stderr to. If
-            no redirection should happen, then this should be None.
-        use_one_memory_mapped_file: If True, then the store will use only a
-            single memory-mapped file.
-    Return:
-        A tuple of the name of the plasma store socket and the process ID of
-            the plasma store process.
-    """
-    if use_valgrind and use_profiler:
-        raise Exception("Cannot use valgrind and profiler at the same time.")
-
-    tmpdir = tempfile.mkdtemp(prefix='test_plasma-')
-    try:
-        plasma_store_name = os.path.join(tmpdir, 'plasma.sock')
-        plasma_store_executable = os.path.join(pa.__path__[0], "plasma_store")
-        command = [plasma_store_executable,
-                   "-s", plasma_store_name,
-                   "-m", str(plasma_store_memory)]
-        if use_one_memory_mapped_file:
-            command += ["-f"]
-        if plasma_directory:
-            command += ["-d", plasma_directory]
-        if use_hugepages:
-            command += ["-h"]
-        stdout_file = None
-        stderr_file = None
-        if use_valgrind:
-            command = ["valgrind",
-                       "--track-origins=yes",
-                       "--leak-check=full",
-                       "--show-leak-kinds=all",
-                       "--leak-check-heuristics=stdstring",
-                       "--error-exitcode=1"] + command
-            proc = subprocess.Popen(command, stdout=stdout_file,
-                                    stderr=stderr_file)
-            time.sleep(1.0)
-        elif use_profiler:
-            command = ["valgrind", "--tool=callgrind"] + command
-            proc = subprocess.Popen(command, stdout=stdout_file,
-                                    stderr=stderr_file)
-            time.sleep(1.0)
-        else:
-            proc = subprocess.Popen(command, stdout=stdout_file,
-                                    stderr=stderr_file)
-            time.sleep(0.1)
-        rc = proc.poll()
-        if rc is not None:
-            raise RuntimeError("plasma_store exited unexpectedly with "
-                               "code %d" % (rc,))
-
-        yield plasma_store_name, proc
-    finally:
-        if proc.poll() is None:
-            proc.kill()
-        shutil.rmtree(tmpdir)
-
-
 @pytest.mark.plasma
 class TestPlasmaClient(object):
 
     def setup_method(self, test_method):
-        use_one_memory_mapped_file = (test_method ==
-                                      self.test_use_one_memory_mapped_file)
-
         import pyarrow.plasma as plasma
         # Start Plasma store.
-        self.plasma_store_ctx = start_plasma_store(
-            use_valgrind=USE_VALGRIND,
-            use_one_memory_mapped_file=use_one_memory_mapped_file)
-        plasma_store_name, self.p = self.plasma_store_ctx.__enter__()
+        self.plasma_store_ctx = plasma.start_plasma_store(
+            plasma_store_memory=DEFAULT_PLASMA_STORE_MEMORY,
+            use_valgrind=USE_VALGRIND)
+        self.plasma_store_name, self.p = self.plasma_store_ctx.__enter__()
         # Connect to Plasma.
-        self.plasma_client = plasma.connect(plasma_store_name, "", 64)
-        self.plasma_client2 = plasma.connect(plasma_store_name, "", 0)
+        self.plasma_client = plasma.connect(self.plasma_store_name)
+        self.plasma_client2 = plasma.connect(self.plasma_store_name)
 
     def teardown_method(self, test_method):
         try:
             # Check that the Plasma store is still alive.
             assert self.p.poll() is None
-            # Ensure Valgrind detected no issues
+            # Ensure Valgrind and/or coverage have a clean exit
+            # Valgrind misses SIGTERM if it is delivered before the
+            # event loop is ready; this race condition is mitigated
+            # but not solved by time.sleep().
             if USE_VALGRIND:
-                self.p.send_signal(signal.SIGTERM)
+                time.sleep(1.0)
+            self.p.send_signal(signal.SIGTERM)
+            if sys.version_info >= (3, 3):
+                self.p.wait(timeout=5)
+            else:
                 self.p.wait()
-                assert self.p.returncode == 0
+            assert self.p.returncode == 0
         finally:
             self.plasma_store_ctx.__exit__(None, None, None)
 
@@ -208,7 +145,7 @@ class TestPlasmaClient(object):
         import pyarrow.plasma as plasma
         # ARROW-1264
         with pytest.raises(IOError):
-            plasma.connect('unknown-store-name', '', 0, 1)
+            plasma.connect('unknown-store-name', num_retries=1)
 
     def test_create(self):
         # Create an object id string.
@@ -272,6 +209,40 @@ class TestPlasmaClient(object):
             else:
                 assert False
 
+    def test_create_and_seal(self):
+
+        # Create a bunch of objects.
+        object_ids = []
+        for i in range(1000):
+            object_id = random_object_id()
+            object_ids.append(object_id)
+            self.plasma_client.create_and_seal(object_id, i * b'a', i * b'b')
+
+        for i in range(1000):
+            [data_tuple] = self.plasma_client.get_buffers([object_ids[i]],
+                                                          with_meta=True)
+            assert data_tuple[1].to_pybytes() == i * b'a'
+            assert (self.plasma_client.get_metadata(
+                        [object_ids[i]])[0].to_pybytes()
+                    == i * b'b')
+
+        # Make sure that creating the same object twice raises an exception.
+        object_id = random_object_id()
+        self.plasma_client.create_and_seal(object_id, b'a', b'b')
+        with pytest.raises(pa.PlasmaObjectExists):
+            self.plasma_client.create_and_seal(object_id, b'a', b'b')
+
+        # Make sure that these objects can be evicted.
+        big_object = DEFAULT_PLASMA_STORE_MEMORY // 10 * b'a'
+        object_ids = []
+        for _ in range(20):
+            object_id = random_object_id()
+            object_ids.append(object_id)
+            self.plasma_client.create_and_seal(random_object_id(), big_object,
+                                               big_object)
+        for i in range(10):
+            assert not self.plasma_client.contains(object_ids[i])
+
     def test_get(self):
         num_object_ids = 60
         # Test timing out of get with various timeouts.
@@ -309,6 +280,18 @@ class TestPlasmaClient(object):
                     #     metadata_buffers[i // 2], metadata_results[i])
                 else:
                     assert results[i] is None
+
+        # Test trying to get an object that was created by the same client but
+        # not sealed.
+        object_id = random_object_id()
+        self.plasma_client.create(object_id, 10, b"metadata")
+        assert self.plasma_client.get_buffers(
+            [object_id], timeout_ms=0, with_meta=True)[0][1] is None
+        assert self.plasma_client.get_buffers(
+            [object_id], timeout_ms=1, with_meta=True)[0][1] is None
+        self.plasma_client.seal(object_id)
+        assert self.plasma_client.get_buffers(
+            [object_id], timeout_ms=0, with_meta=True)[0][1]is not None
 
     def test_buffer_lifetime(self):
         # ARROW-2195
@@ -349,8 +332,39 @@ class TestPlasmaClient(object):
             result = self.plasma_client.get(object_id)
             assert result == value
 
-            object_id = pa.plasma.ObjectID.from_random()
+            object_id = random_object_id()
             [result] = self.plasma_client.get([object_id], timeout_ms=0)
+            assert result == pa.plasma.ObjectNotAvailable
+
+    def test_put_and_get_raw_buffer(self):
+        temp_id = random_object_id()
+        use_meta = b"RAW"
+
+        def deserialize_or_output(data_tuple):
+            if data_tuple[0] == use_meta:
+                return data_tuple[1].to_pybytes()
+            else:
+                if data_tuple[1] is None:
+                    return pa.plasma.ObjectNotAvailable
+                else:
+                    return pa.deserialize(data_tuple[1])
+
+        for value in [b"Bytes Test", temp_id.binary(), 10 * b"\x00", 123]:
+            if isinstance(value, bytes):
+                object_id = self.plasma_client.put_raw_buffer(
+                    value, metadata=use_meta)
+            else:
+                object_id = self.plasma_client.put(value)
+            [result] = self.plasma_client.get_buffers([object_id],
+                                                      with_meta=True)
+            result = deserialize_or_output(result)
+            assert result == value
+
+            object_id = random_object_id()
+            [result] = self.plasma_client.get_buffers([object_id],
+                                                      timeout_ms=0,
+                                                      with_meta=True)
+            result = deserialize_or_output(result)
             assert result == pa.plasma.ObjectNotAvailable
 
     def test_put_and_get_serialization_context(self):
@@ -365,7 +379,7 @@ class TestPlasmaClient(object):
             self.plasma_client.put(val)
 
         serialization_context = pa.SerializationContext()
-        serialization_context.register_type(CustomType, 20*b"\x00")
+        serialization_context.register_type(CustomType, 20*"\x00")
 
         object_id = self.plasma_client.put(
             val, None, serialization_context=serialization_context)
@@ -455,22 +469,26 @@ class TestPlasmaClient(object):
         memory_buffers.append(memory_buffer)
         # Remaining space is 50%. Make sure that we can't create an
         # object of size 50% + 1, but we can create one of size 20%.
-        assert_create_raises_plasma_full(self, 50 * PERCENT + 1)
+        assert_create_raises_plasma_full(
+            self, 50 * PERCENT + SMALL_OBJECT_SIZE)
         _, memory_buffer, _ = create_object(self.plasma_client, 20 * PERCENT)
         del memory_buffer
         _, memory_buffer, _ = create_object(self.plasma_client, 20 * PERCENT)
         del memory_buffer
-        assert_create_raises_plasma_full(self, 50 * PERCENT + 1)
+        assert_create_raises_plasma_full(
+            self, 50 * PERCENT + SMALL_OBJECT_SIZE)
 
         _, memory_buffer, _ = create_object(self.plasma_client, 20 * PERCENT)
         memory_buffers.append(memory_buffer)
         # Remaining space is 30%.
-        assert_create_raises_plasma_full(self, 30 * PERCENT + 1)
+        assert_create_raises_plasma_full(
+            self, 30 * PERCENT + SMALL_OBJECT_SIZE)
 
         _, memory_buffer, _ = create_object(self.plasma_client, 10 * PERCENT)
         memory_buffers.append(memory_buffer)
         # Remaining space is 20%.
-        assert_create_raises_plasma_full(self, 20 * PERCENT + 1)
+        assert_create_raises_plasma_full(
+            self, 20 * PERCENT + SMALL_OBJECT_SIZE)
 
     def test_contains(self):
         fake_object_ids = [random_object_id() for _ in range(100)]
@@ -727,6 +745,34 @@ class TestPlasmaClient(object):
                 assert data_sizes[j] == recv_dsize
                 assert metadata_sizes[j] == recv_msize
 
+    def test_subscribe_socket(self):
+        # Subscribe to notifications from the Plasma Store.
+        self.plasma_client.subscribe()
+        rsock = self.plasma_client.get_notification_socket()
+        for i in self.SUBSCRIBE_TEST_SIZES:
+            # Get notification from socket.
+            object_ids = [random_object_id() for _ in range(i)]
+            metadata_sizes = [np.random.randint(1000) for _ in range(i)]
+            data_sizes = [np.random.randint(1000) for _ in range(i)]
+
+            for j in range(i):
+                self.plasma_client.create(
+                    object_ids[j], data_sizes[j],
+                    metadata=bytearray(np.random.bytes(metadata_sizes[j])))
+                self.plasma_client.seal(object_ids[j])
+
+            # Check that we received notifications for all of the objects.
+            for j in range(i):
+                # Assume the plasma store will not be full,
+                # so we always get the data size instead of -1.
+                msg_len, = struct.unpack('L', rsock.recv(8))
+                content = rsock.recv(msg_len)
+                recv_objid, recv_dsize, recv_msize = (
+                    self.plasma_client.decode_notification(content))
+                assert object_ids[j] == recv_objid
+                assert data_sizes[j] == recv_dsize
+                assert metadata_sizes[j] == recv_msize
+
     def test_subscribe_deletions(self):
         # Subscribe to notifications from the Plasma Store. We use
         # plasma_client2 to make sure that all used objects will get evicted
@@ -794,7 +840,7 @@ class TestPlasmaClient(object):
             assert -1 == recv_dsize
             assert -1 == recv_msize
 
-    def test_use_one_memory_mapped_file(self):
+    def test_use_full_memory(self):
         # Fill the object store up with a large number of small objects and let
         # them go out of scope.
         for _ in range(100):
@@ -807,8 +853,128 @@ class TestPlasmaClient(object):
             create_object(self.plasma_client2, DEFAULT_PLASMA_STORE_MEMORY, 0)
         # Verify that an object that is too large does not fit.
         with pytest.raises(pa.lib.PlasmaStoreFull):
-            create_object(self.plasma_client2, DEFAULT_PLASMA_STORE_MEMORY + 1,
-                          0)
+            create_object(self.plasma_client2,
+                          DEFAULT_PLASMA_STORE_MEMORY + SMALL_OBJECT_SIZE, 0)
+
+    def test_client_death_during_get(self):
+        import pyarrow.plasma as plasma
+
+        object_id = random_object_id()
+
+        def client_blocked_in_get(plasma_store_name):
+            client = plasma.connect(self.plasma_store_name)
+            # Try to get an object ID that doesn't exist. This should block.
+            client.get([object_id])
+
+        p = multiprocessing.Process(target=client_blocked_in_get,
+                                    args=(self.plasma_store_name, ))
+        p.start()
+        # Make sure the process is running.
+        time.sleep(0.2)
+        assert p.is_alive()
+
+        # Kill the client process.
+        p.terminate()
+        # Wait a little for the store to process the disconnect event.
+        time.sleep(0.1)
+
+        # Create the object.
+        self.plasma_client.put(1, object_id=object_id)
+
+        # Check that the store is still alive. This will raise an exception if
+        # the store is dead.
+        self.plasma_client.contains(random_object_id())
+
+    def test_client_getting_multiple_objects(self):
+        import pyarrow.plasma as plasma
+
+        object_ids = [random_object_id() for _ in range(10)]
+
+        def client_get_multiple(plasma_store_name):
+            client = plasma.connect(self.plasma_store_name)
+            # Try to get an object ID that doesn't exist. This should block.
+            client.get(object_ids)
+
+        p = multiprocessing.Process(target=client_get_multiple,
+                                    args=(self.plasma_store_name, ))
+        p.start()
+        # Make sure the process is running.
+        time.sleep(0.2)
+        assert p.is_alive()
+
+        # Create the objects one by one.
+        for object_id in object_ids:
+            self.plasma_client.put(1, object_id=object_id)
+
+        # Check that the store is still alive. This will raise an exception if
+        # the store is dead.
+        self.plasma_client.contains(random_object_id())
+
+        # Make sure that the blocked client finishes.
+        start_time = time.time()
+        while True:
+            if time.time() - start_time > 5:
+                raise Exception("Timing out while waiting for blocked client "
+                                "to finish.")
+            if not p.is_alive():
+                break
+
+
+@pytest.mark.plasma
+class TestEvictionToExternalStore(object):
+
+    def setup_method(self, test_method):
+        import pyarrow.plasma as plasma
+        # Start Plasma store.
+        self.plasma_store_ctx = plasma.start_plasma_store(
+            plasma_store_memory=1000 * 1024,
+            use_valgrind=USE_VALGRIND,
+            external_store=EXTERNAL_STORE)
+        self.plasma_store_name, self.p = self.plasma_store_ctx.__enter__()
+        # Connect to Plasma.
+        self.plasma_client = plasma.connect(self.plasma_store_name)
+
+    def teardown_method(self, test_method):
+        try:
+            # Check that the Plasma store is still alive.
+            assert self.p.poll() is None
+            self.p.send_signal(signal.SIGTERM)
+            if sys.version_info >= (3, 3):
+                self.p.wait(timeout=5)
+            else:
+                self.p.wait()
+        finally:
+            self.plasma_store_ctx.__exit__(None, None, None)
+
+    def test_eviction(self):
+        client = self.plasma_client
+
+        object_ids = [random_object_id() for _ in range(0, 20)]
+        data = b'x' * 100 * 1024
+        metadata = b''
+
+        for i in range(0, 20):
+            # Test for object non-existence.
+            assert not client.contains(object_ids[i])
+
+            # Create and seal the object.
+            client.create_and_seal(object_ids[i], data, metadata)
+
+            # Test that the client can get the object.
+            assert client.contains(object_ids[i])
+
+        for i in range(0, 20):
+            # Since we are accessing objects sequentially, every object we
+            # access would be a cache "miss" owing to LRU eviction.
+            # Try and access the object from the plasma store first, and then
+            # try external store on failure. This should succeed to fetch the
+            # object. However, it may evict the next few objects.
+            [result] = client.get_buffers([object_ids[i]])
+            assert result.to_pybytes() == data
+
+        # Make sure we still cannot fetch objects that do not exist
+        [result] = client.get_buffers([random_object_id()], timeout_ms=100)
+        assert result is None
 
 
 @pytest.mark.plasma
@@ -819,11 +985,101 @@ def test_object_id_size():
     plasma.ObjectID(20 * b"0")
 
 
+@pytest.mark.plasma
+def test_object_id_equality_operators():
+    import pyarrow.plasma as plasma
+
+    oid1 = plasma.ObjectID(20 * b'0')
+    oid2 = plasma.ObjectID(20 * b'0')
+    oid3 = plasma.ObjectID(19 * b'0' + b'1')
+
+    assert oid1 == oid2
+    assert oid2 != oid3
+    assert oid1 != 'foo'
+
+
+@pytest.mark.xfail(reason="often fails on travis")
 @pytest.mark.skipif(not os.path.exists("/mnt/hugepages"),
                     reason="requires hugepage support")
 def test_use_huge_pages():
     import pyarrow.plasma as plasma
-    with start_plasma_store(plasma_directory="/mnt/hugepages",
-                            use_hugepages=True) as (plasma_store_name, p):
-        plasma_client = plasma.connect(plasma_store_name, "", 64)
-        create_object(plasma_client, 100000000)
+    with plasma.start_plasma_store(
+            plasma_store_memory=2*10**9,
+            plasma_directory="/mnt/hugepages",
+            use_hugepages=True) as (plasma_store_name, p):
+        plasma_client = plasma.connect(plasma_store_name)
+        create_object(plasma_client, 10**8)
+
+
+# This is checking to make sure plasma_clients cannot be destroyed
+# before all the PlasmaBuffers that have handles to them are
+# destroyed, see ARROW-2448.
+@pytest.mark.plasma
+def test_plasma_client_sharing():
+    import pyarrow.plasma as plasma
+
+    with plasma.start_plasma_store(
+            plasma_store_memory=DEFAULT_PLASMA_STORE_MEMORY) \
+            as (plasma_store_name, p):
+        plasma_client = plasma.connect(plasma_store_name)
+        object_id = plasma_client.put(np.zeros(3))
+        buf = plasma_client.get(object_id)
+        del plasma_client
+        assert (buf == np.zeros(3)).all()
+        del buf  # This segfaulted pre ARROW-2448.
+
+
+@pytest.mark.plasma
+def test_plasma_list():
+    import pyarrow.plasma as plasma
+
+    with plasma.start_plasma_store(
+            plasma_store_memory=DEFAULT_PLASMA_STORE_MEMORY) \
+            as (plasma_store_name, p):
+        plasma_client = plasma.connect(plasma_store_name)
+
+        # Test sizes
+        u, _, _ = create_object(plasma_client, 11, metadata_size=7, seal=False)
+        l1 = plasma_client.list()
+        assert l1[u]["data_size"] == 11
+        assert l1[u]["metadata_size"] == 7
+
+        # Test ref_count
+        v = plasma_client.put(np.zeros(3))
+        l2 = plasma_client.list()
+        # Ref count has already been released
+        assert l2[v]["ref_count"] == 0
+        a = plasma_client.get(v)
+        l3 = plasma_client.list()
+        assert l3[v]["ref_count"] == 1
+        del a
+
+        # Test state
+        w, _, _ = create_object(plasma_client, 3, metadata_size=0, seal=False)
+        l4 = plasma_client.list()
+        assert l4[w]["state"] == "created"
+        plasma_client.seal(w)
+        l5 = plasma_client.list()
+        assert l5[w]["state"] == "sealed"
+
+        # Test timestamps
+        t1 = time.time()
+        x, _, _ = create_object(plasma_client, 3, metadata_size=0, seal=False)
+        t2 = time.time()
+        l6 = plasma_client.list()
+        assert math.floor(t1) <= l6[x]["create_time"] <= math.ceil(t2)
+        time.sleep(2.0)
+        t3 = time.time()
+        plasma_client.seal(x)
+        t4 = time.time()
+        l7 = plasma_client.list()
+        assert math.floor(t3 - t2) <= l7[x]["construct_duration"]
+        assert l7[x]["construct_duration"] <= math.ceil(t4 - t1)
+
+
+@pytest.mark.plasma
+def test_object_id_randomness():
+    cmd = "from pyarrow import plasma; print(plasma.ObjectID.from_random())"
+    first_object_id = subprocess.check_output(["python", "-c", cmd])
+    second_object_id = subprocess.check_output(["python", "-c", cmd])
+    assert first_object_id != second_object_id

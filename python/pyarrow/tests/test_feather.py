@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import io
 import os
 import sys
 import tempfile
@@ -29,7 +30,7 @@ import pandas as pd
 
 import pyarrow as pa
 from pyarrow.feather import (read_feather, write_feather,
-                             FeatherReader)
+                             read_table, FeatherReader, FeatherDataset)
 from pyarrow.lib import FeatherWriter
 
 
@@ -65,7 +66,7 @@ class TestFeatherReader(unittest.TestCase):
 
     def _check_pandas_roundtrip(self, df, expected=None, path=None,
                                 columns=None, null_counts=None,
-                                nthreads=1):
+                                use_threads=False):
         if path is None:
             path = random_path()
 
@@ -74,7 +75,7 @@ class TestFeatherReader(unittest.TestCase):
         if not os.path.exists(path):
             raise Exception('file not written')
 
-        result = read_feather(path, columns, nthreads=nthreads)
+        result = read_feather(path, columns, use_threads=use_threads)
         if expected is None:
             expected = df
 
@@ -99,6 +100,47 @@ class TestFeatherReader(unittest.TestCase):
             write_feather(df, path)
 
         pytest.raises(exc, f)
+
+    def test_dataset(self):
+        num_values = (100, 100)
+        num_files = 5
+        paths = [random_path() for i in range(num_files)]
+        df = pd.DataFrame(np.random.randn(*num_values),
+                          columns=['col_' + str(i)
+                                   for i in range(num_values[1])])
+
+        self.test_files.extend(paths)
+        for index, path in enumerate(paths):
+            rows = (index * (num_values[0] // num_files),
+                    (index + 1) * (num_values[0] // num_files))
+            writer = FeatherWriter()
+            writer.open(path)
+
+            for col in range(num_values[1]):
+                writer.write_array(df.columns[col],
+                                   df.iloc[rows[0]:rows[1], col])
+
+            writer.close()
+
+        data = FeatherDataset(paths).read_pandas()
+        assert_frame_equal(data, df)
+
+    def test_num_columns_attr(self):
+        df0 = pd.DataFrame({})
+        df1 = pd.DataFrame({
+            'foo': [1, 2, 3, 4, 5]
+        })
+        df2 = pd.DataFrame({
+            'foo': [1, 2, 3, 4, 5],
+            'bar': [1, 2, 3, 4, 5]
+        })
+        for df, ncols in zip([df0, df1, df2], [0, 1, 2]):
+            path = random_path()
+            self.test_files.append(path)
+            write_feather(df, path)
+
+            reader = FeatherReader(path)
+            assert reader.num_columns == ncols
 
     def test_num_rows_attr(self):
         df = pd.DataFrame({'foo': [1, 2, 3, 4, 5]})
@@ -128,6 +170,29 @@ class TestFeatherReader(unittest.TestCase):
 
         df = pd.DataFrame(data)
         self._check_pandas_roundtrip(df)
+
+    def test_read_table(self):
+        num_values = (100, 100)
+        path = random_path()
+
+        self.test_files.append(path)
+        writer = FeatherWriter()
+        writer.open(path)
+
+        values = np.random.randint(0, 100, size=num_values)
+
+        for i in range(100):
+            writer.write_array('col_' + str(i), values[:, i])
+
+        writer.close()
+
+        data = pd.DataFrame(values,
+                            columns=['col_' + str(i) for i in range(100)])
+        table = pa.Table.from_pandas(data)
+
+        result = read_table(path)
+
+        assert_frame_equal(table.to_pandas(), result.to_pandas())
 
     def test_float_nulls(self):
         num_values = 100
@@ -337,7 +402,7 @@ class TestFeatherReader(unittest.TestCase):
         data = {'c{0}'.format(i): [''] * 10
                 for i in range(100)}
         df = pd.DataFrame(data)
-        self._check_pandas_roundtrip(df, nthreads=4)
+        self._check_pandas_roundtrip(df, use_threads=True)
 
     def test_nan_as_null(self):
         # Create a nan that is not numpy.nan
@@ -471,3 +536,20 @@ class TestFeatherReader(unittest.TestCase):
     def test_large_dataframe(self):
         df = pd.DataFrame({'A': np.arange(400000000)})
         self._check_pandas_roundtrip(df)
+
+
+@pytest.mark.large_memory
+def test_chunked_binary_error_message():
+    # ARROW-3058: As Feather does not yet support chunked columns, we at least
+    # make sure it's clear to the user what is going on
+
+    # 2^31 + 1 bytes
+    values = [b'x'] + [
+        b'x' * (1 << 20)
+    ] * 2 * (1 << 10)
+    df = pd.DataFrame({'byte_col': values})
+
+    with pytest.raises(ValueError, match="'byte_col' exceeds 2GB maximum "
+                       "capacity of a Feather binary column. This restriction "
+                       "may be lifted in the future"):
+        write_feather(df, io.BytesIO())

@@ -55,3 +55,29 @@ func TestBuilder_UnsafeSetValid(t *testing.T) {
 	ab.unsafeSetValid(17)
 	assert.Equal(t, []byte{0xe0, 0xff, 0x3f, 0}, ab.nullBitmap.Bytes())
 }
+
+func TestBuilder_resize(t *testing.T) {
+	b := &builder{mem: memory.NewGoAllocator()}
+	n := 64
+
+	b.init(n)
+	assert.Equal(t, n, b.Cap())
+	assert.Equal(t, 0, b.Len())
+
+	b.UnsafeAppendBoolToBitmap(true)
+	for i := 1; i < n; i++ {
+		b.UnsafeAppendBoolToBitmap(false)
+	}
+	assert.Equal(t, n, b.Cap())
+	assert.Equal(t, n, b.Len())
+	assert.Equal(t, n-1, b.NullN())
+
+	n = 5
+	b.resize(n, b.init)
+	assert.Equal(t, n, b.Len())
+	assert.Equal(t, n-1, b.NullN())
+
+	b.resize(32, b.init)
+	assert.Equal(t, n, b.Len())
+	assert.Equal(t, n-1, b.NullN())
+}

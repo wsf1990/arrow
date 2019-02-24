@@ -20,7 +20,7 @@
 
   <groupId>org.apache.arrow</groupId>
   <artifactId>arrow-java-root</artifactId>
-  <version>0.10.0-SNAPSHOT</version>
+  <version>0.13.0-SNAPSHOT</version>
   <packaging>pom</packaging>
 
   <name>Apache Arrow Java Root POM</name>
@@ -31,20 +31,21 @@
     <target.gen.source.path>${project.basedir}/target/generated-sources</target.gen.source.path>
     <dep.junit.version>4.11</dep.junit.version>
     <dep.slf4j.version>1.7.25</dep.slf4j.version>
-    <dep.guava.version>18.0</dep.guava.version>
-    <dep.netty.version>4.1.17.Final</dep.netty.version>
+    <dep.guava.version>20.0</dep.guava.version>
+    <dep.netty.version>4.1.22.Final</dep.netty.version>
     <dep.jackson.version>2.7.9</dep.jackson.version>
     <dep.hadoop.version>2.7.1</dep.hadoop.version>
-    <fbs.version>1.2.0-3f79e055</fbs.version>
+    <dep.fbs.version>1.9.0</dep.fbs.version>
+    <dep.flatc.version>1.9.0</dep.flatc.version>
     <forkCount>2</forkCount>
-    <checkstyle.failOnViolation>false</checkstyle.failOnViolation>
+    <checkstyle.failOnViolation>true</checkstyle.failOnViolation>
   </properties>
 
   <scm>
     <connection>scm:git:https://github.com/apache/arrow.git</connection>
     <developerConnection>scm:git:https://github.com/apache/arrow.git</developerConnection>
     <url>https://github.com/apache/arrow</url>
-    <tag>apache-arrow-0.7.1</tag>
+    <tag>apache-arrow-0.10.0</tag>
   </scm>
 
   <mailingLists>
@@ -97,6 +98,7 @@
         <configuration>
           <excludeSubProjects>false</excludeSubProjects>
           <excludes>
+            <exclude>**/dependency-reduced-pom.xml</exclude>
             <exclude>**/*.log</exclude>
             <exclude>**/*.css</exclude>
             <exclude>**/*.js</exclude>
@@ -118,7 +120,6 @@
             <exclude>**/*.proto</exclude>
             <exclude>**/*.fmpp</exclude>
             <exclude>**/target/**</exclude>
-            <exclude>**/*.iml</exclude>
             <exclude>**/*.tdd</exclude>
             <exclude>**/*.project</exclude>
             <exclude>**/TAGS</exclude>
@@ -132,6 +133,7 @@
             <exclude>**/*.linux</exclude>
             <exclude>**/client/build/**</exclude>
             <exclude>**/*.tbl</exclude>
+            <exclude>**/*.iml</exclude>
           </excludes>
         </configuration>
       </plugin>
@@ -183,8 +185,8 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
         <configuration>
-          <source>1.7</source>
-          <target>1.7</target>
+          <source>1.8</source>
+          <target>1.8</target>
           <maxmem>2048m</maxmem>
           <useIncrementalCompilation>false</useIncrementalCompilation>
           <fork>true</fork>
@@ -259,7 +261,7 @@
 
         <configuration>
           <dateFormat>dd.MM.yyyy '@' HH:mm:ss z</dateFormat>
-          <verbose>true</verbose>
+          <verbose>false</verbose>
           <skipPoms>false</skipPoms>
           <generateGitPropertiesFile>true</generateGitPropertiesFile>
           <failOnNoGitDirectory>false</failOnNoGitDirectory>
@@ -307,6 +309,7 @@
           <configLocation>dev/checkstyle/checkstyle.xml</configLocation>
           <headerLocation>dev/checkstyle/checkstyle.license</headerLocation>
           <suppressionsLocation>dev/checkstyle/suppressions.xml</suppressionsLocation>
+          <includeTestSourceDirectory>true</includeTestSourceDirectory>
           <encoding>UTF-8</encoding>
           <consoleOutput>true</consoleOutput>
           <failsOnError>${checkstyle.failOnViolation}</failsOnError>
@@ -331,6 +334,10 @@
             <configuration>
               <ignoreNonCompile>true</ignoreNonCompile>
               <failOnWarning>true</failOnWarning>
+              <ignoredDependencies>
+                <!-- source annotations (not kept in compiled code) -->
+                <ignoredDependency>javax.annotation:javax.annotation-api:*</ignoredDependency>
+              </ignoredDependencies>
             </configuration>
           </execution>
         </executions>
@@ -347,7 +354,7 @@
         <plugin>
           <groupId>org.apache.rat</groupId>
           <artifactId>apache-rat-plugin</artifactId>
-          <version>0.11</version>
+          <version>0.13</version>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
@@ -361,13 +368,14 @@
         </plugin>
         <plugin>
           <artifactId>maven-enforcer-plugin</artifactId>
-          <version>3.0.0-M1</version>
+          <version>3.0.0-M2</version>
         </plugin>
         <plugin>
           <artifactId>maven-surefire-plugin</artifactId>
           <version>2.20</version>
           <configuration>
             <enableAssertions>true</enableAssertions>
+            <childDelegation>true</childDelegation>
             <forkCount>${forkCount}</forkCount>
             <reuseForks>true</reuseForks>
             <systemPropertyVariables>
@@ -477,9 +485,9 @@
   <dependencyManagement>
     <dependencies>
       <dependency>
-        <groupId>com.vlkan</groupId>
-        <artifactId>flatbuffers</artifactId>
-        <version>${fbs.version}</version>
+        <groupId>com.google.flatbuffers</groupId>
+        <artifactId>flatbuffers-java</artifactId>
+        <version>${dep.fbs.version}</version>
       </dependency>
       <dependency>
         <groupId>com.google.guava</groupId>
@@ -525,6 +533,11 @@
         <groupId>org.slf4j</groupId>
         <artifactId>slf4j-api</artifactId>
         <version>${dep.slf4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>javax.annotation</groupId>
+        <artifactId>javax.annotation-api</artifactId>
+        <version>1.3.2</version>
       </dependency>
     </dependencies>
   </dependencyManagement>
@@ -623,17 +636,36 @@
     <module>memory</module>
     <module>vector</module>
     <module>tools</module>
+    <module>adapter/jdbc</module>
+    <module>plasma</module>
+    <module>flight</module>
   </modules>
 
   <profiles>
     <profile>
       <id>java-8</id>
       <activation>
-	<jdk>[1.8,)</jdk>
+        <jdk>[1.8,)</jdk>
       </activation>
       <properties>
-	<doclint>none</doclint>
+        <doclint>none</doclint>
+        <additionalparam>-Xdoclint:none</additionalparam>
       </properties>
+    </profile>
+
+    <profile>
+      <!-- gandiva java depends on gandiva cpp, and gandiva cpp isn't enabled by default yet -->
+      <id>gandiva</id>
+      <modules>
+        <module>format</module>
+        <module>memory</module>
+        <module>vector</module>
+        <module>tools</module>
+        <module>adapter/jdbc</module>
+        <module>plasma</module>
+        <module>flight</module>
+        <module>gandiva</module>
+      </modules>
     </profile>
   </profiles>
 

@@ -31,7 +31,7 @@
 
 namespace arrow {
 
-class KeyValueMetadata;
+class MemoryPool;
 class Status;
 
 /// \class ChunkedArray
@@ -39,7 +39,19 @@ class Status;
 /// as one large array
 class ARROW_EXPORT ChunkedArray {
  public:
+  /// \brief Construct a chunked array from a vector of arrays
+  ///
+  /// The vector should be non-empty and all its elements should have the same
+  /// data type.
   explicit ChunkedArray(const ArrayVector& chunks);
+
+  /// \brief Construct a chunked array from a single Array
+  explicit ChunkedArray(const std::shared_ptr<Array>& chunk)
+      : ChunkedArray(ArrayVector({chunk})) {}
+
+  /// \brief Construct a chunked array from a vector of arrays and a data type
+  ///
+  /// As the data type is passed explicitly, the vector may be empty.
   ChunkedArray(const ArrayVector& chunks, const std::shared_ptr<DataType>& type);
 
   /// \return the total length of the chunked array; computed on construction
@@ -69,9 +81,21 @@ class ARROW_EXPORT ChunkedArray {
   /// \brief Slice from offset until end of the chunked array
   std::shared_ptr<ChunkedArray> Slice(int64_t offset) const;
 
+  /// \brief Flatten this chunked array as a vector of chunked arrays, one
+  /// for each struct field
+  ///
+  /// \param[in] pool The pool for buffer allocations, if any
+  /// \param[out] out The resulting vector of arrays
+  Status Flatten(MemoryPool* pool, std::vector<std::shared_ptr<ChunkedArray>>* out) const;
+
   std::shared_ptr<DataType> type() const { return type_; }
 
+  /// \brief Determine if two chunked arrays are equal.
+  ///
+  /// Two chunked arrays can be equal only if they have equal datatypes.
+  /// However, they may be equal even if they have different chunkings.
   bool Equals(const ChunkedArray& other) const;
+  /// \brief Determine if two chunked arrays are equal.
   bool Equals(const std::shared_ptr<ChunkedArray>& other) const;
 
  protected:
@@ -89,13 +113,27 @@ class ARROW_EXPORT ChunkedArray {
 /// metadata) and a chunked data array
 class ARROW_EXPORT Column {
  public:
+  /// \brief Construct a column from a vector of arrays
+  ///
+  /// The array chunks' datatype must match the field's datatype.
   Column(const std::shared_ptr<Field>& field, const ArrayVector& chunks);
+  /// \brief Construct a column from a chunked array
+  ///
+  /// The chunked array's datatype must match the field's datatype.
   Column(const std::shared_ptr<Field>& field, const std::shared_ptr<ChunkedArray>& data);
-
+  /// \brief Construct a column from a single array
+  ///
+  /// The array's datatype must match the field's datatype.
   Column(const std::shared_ptr<Field>& field, const std::shared_ptr<Array>& data);
 
-  // Construct from name and array
+  /// \brief Construct a column from a name and an array
+  ///
+  /// A field with the given name and the array's datatype is automatically created.
   Column(const std::string& name, const std::shared_ptr<Array>& data);
+  /// \brief Construct a column from a name and a chunked array
+  ///
+  /// A field with the given name and the array's datatype is automatically created.
+  Column(const std::string& name, const std::shared_ptr<ChunkedArray>& data);
 
   int64_t length() const { return data_->length(); }
 
@@ -133,7 +171,18 @@ class ARROW_EXPORT Column {
     return std::make_shared<Column>(field_, data_->Slice(offset));
   }
 
+  /// \brief Flatten this column as a vector of columns
+  ///
+  /// \param[in] pool The pool for buffer allocations, if any
+  /// \param[out] out The resulting vector of arrays
+  Status Flatten(MemoryPool* pool, std::vector<std::shared_ptr<Column>>* out) const;
+
+  /// \brief Determine if two columns are equal.
+  ///
+  /// Two columns can be equal only if they have equal datatypes.
+  /// However, they may be equal even if they have different chunkings.
   bool Equals(const Column& other) const;
+  /// \brief Determine if the two columns are equal.
   bool Equals(const std::shared_ptr<Column>& other) const;
 
   /// \brief Verify that the column's array data is consistent with the passed
@@ -193,18 +242,29 @@ class ARROW_EXPORT Table {
       const std::vector<std::shared_ptr<RecordBatch>>& batches,
       std::shared_ptr<Table>* table);
 
-  /// \return the table's schema
+  /// Return the table schema
   std::shared_ptr<Schema> schema() const { return schema_; }
 
-  /// \param[in] i column index, does not boundscheck
-  /// \return the i-th column
+  /// Return a column by index
   virtual std::shared_ptr<Column> column(int i) const = 0;
+
+  /// \brief Return a column by name
+  /// \param[in] name field name
+  /// \return an Array or null if no field was found
+  std::shared_ptr<Column> GetColumnByName(const std::string& name) const {
+    auto i = schema_->GetFieldIndex(name);
+    return i == -1 ? NULLPTR : column(i);
+  }
 
   /// \brief Remove column from the table, producing a new Table
   virtual Status RemoveColumn(int i, std::shared_ptr<Table>* out) const = 0;
 
   /// \brief Add column to the table, producing a new Table
   virtual Status AddColumn(int i, const std::shared_ptr<Column>& column,
+                           std::shared_ptr<Table>* out) const = 0;
+
+  /// \brief Replace a column in the table, producing a new Table
+  virtual Status SetColumn(int i, const std::shared_ptr<Column>& column,
                            std::shared_ptr<Table>* out) const = 0;
 
   /// \brief Replace schema key-value metadata with new metadata (EXPERIMENTAL)
@@ -215,16 +275,26 @@ class ARROW_EXPORT Table {
   virtual std::shared_ptr<Table> ReplaceSchemaMetadata(
       const std::shared_ptr<const KeyValueMetadata>& metadata) const = 0;
 
+  /// \brief Flatten the table, producing a new Table.  Any column with a
+  /// struct type will be flattened into multiple columns
+  ///
+  /// \param[in] pool The pool for buffer allocations, if any
+  /// \param[out] out The returned table
+  virtual Status Flatten(MemoryPool* pool, std::shared_ptr<Table>* out) const = 0;
+
   /// \brief Perform any checks to validate the input arguments
   virtual Status Validate() const = 0;
 
-  /// \return the number of columns in the table
+  /// \brief Return the number of columns in the table
   int num_columns() const { return schema_->num_fields(); }
 
-  /// \return the number of rows (the corresponding length of each column)
+  /// \brief Return the number of rows (equal to each column's logical length)
   int64_t num_rows() const { return num_rows_; }
 
-  /// \brief Determine if semantic contents of tables are exactly equal
+  /// \brief Determine if tables are equal
+  ///
+  /// Two tables can be equal only if they have equal schemas.
+  /// However, they may be equal even if they have different chunkings.
   bool Equals(const Table& other) const;
 
  protected:
@@ -237,18 +307,25 @@ class ARROW_EXPORT Table {
   ARROW_DISALLOW_COPY_AND_ASSIGN(Table);
 };
 
-/// \brief Compute a sequence of record batches from a (possibly chunked) Table
+/// \brief Compute a stream of record batches from a (possibly chunked) Table
+///
+/// The conversion is zero-copy: each record batch is a view over a slice
+/// of the table's columns.
 class ARROW_EXPORT TableBatchReader : public RecordBatchReader {
  public:
   ~TableBatchReader() override;
 
-  /// \brief Read batches with the maximum possible size
+  /// \brief Construct a TableBatchReader for the given table
   explicit TableBatchReader(const Table& table);
 
   std::shared_ptr<Schema> schema() const override;
 
   Status ReadNext(std::shared_ptr<RecordBatch>* out) override;
 
+  /// \brief Set the desired maximum chunk size of record batches
+  ///
+  /// The actual chunk size of each record batch may be smaller, depending
+  /// on actual chunking characteristics of each table column.
   void set_chunksize(int64_t chunksize);
 
  private:
@@ -257,7 +334,10 @@ class ARROW_EXPORT TableBatchReader : public RecordBatchReader {
 };
 
 /// \brief Construct table from multiple input tables.
-/// \return Status, fails if any schemas are different
+///
+/// The tables are concatenated vertically.  Therefore, all tables should
+/// have the same schema.  Each column in the output table is the result
+/// of concatenating the corresponding columns in all input tables.
 ARROW_EXPORT
 Status ConcatenateTables(const std::vector<std::shared_ptr<Table>>& tables,
                          std::shared_ptr<Table>* table);

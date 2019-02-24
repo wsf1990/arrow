@@ -21,6 +21,7 @@ import pytest
 from pyarrow.compat import unittest, u  # noqa
 import pyarrow as pa
 
+import collections
 import datetime
 import decimal
 import itertools
@@ -31,11 +32,11 @@ import pytz
 
 int_type_pairs = [
     (np.int8, pa.int8()),
-    (np.int16, pa.int64()),
+    (np.int16, pa.int16()),
     (np.int32, pa.int32()),
     (np.int64, pa.int64()),
     (np.uint8, pa.uint8()),
-    (np.uint16, pa.uint64()),
+    (np.uint16, pa.uint16()),
     (np.uint32, pa.uint32()),
     (np.uint64, pa.uint64())]
 
@@ -49,6 +50,14 @@ class StrangeIterable:
 
     def __iter__(self):
         return self.lst.__iter__()
+
+
+def check_struct_type(ty, expected):
+    """
+    Check a struct type is as expected, but not taking order into account.
+    """
+    assert pa.types.is_struct(ty)
+    assert set(ty) == set(expected)
 
 
 def test_iterable_types():
@@ -110,12 +119,22 @@ def _as_tuple(xs):
     return tuple(xs)
 
 
+def _as_deque(xs):
+    # deque is a sequence while neither tuple nor list
+    return collections.deque(xs)
+
+
 def _as_dict_values(xs):
+    # a dict values object is not a sequence, just a regular iterable
     dct = {k: v for k, v in enumerate(xs)}
     return six.viewvalues(dct)
 
 
-@pytest.mark.parametrize("seq", [_as_list, _as_tuple, _as_dict_values])
+parametrize_with_iterable_types = pytest.mark.parametrize(
+    "seq", [_as_list, _as_tuple, _as_deque, _as_dict_values])
+
+
+@parametrize_with_iterable_types
 def test_sequence_types(seq):
     arr1 = pa.array(seq([1, 2, 3]))
     arr2 = pa.array([1, 2, 3])
@@ -123,7 +142,7 @@ def test_sequence_types(seq):
     assert arr1.equals(arr2)
 
 
-@pytest.mark.parametrize("seq", [_as_list, _as_tuple, _as_dict_values])
+@parametrize_with_iterable_types
 def test_sequence_boolean(seq):
     expected = [True, None, False, None]
     arr = pa.array(seq(expected))
@@ -133,7 +152,7 @@ def test_sequence_boolean(seq):
     assert arr.to_pylist() == expected
 
 
-@pytest.mark.parametrize("seq", [_as_list, _as_tuple, _as_dict_values])
+@parametrize_with_iterable_types
 def test_sequence_numpy_boolean(seq):
     expected = [np.bool(True), None, np.bool(False), None]
     arr = pa.array(seq(expected))
@@ -143,7 +162,7 @@ def test_sequence_numpy_boolean(seq):
     assert arr.to_pylist() == expected
 
 
-@pytest.mark.parametrize("seq", [_as_list, _as_tuple, _as_dict_values])
+@parametrize_with_iterable_types
 def test_empty_list(seq):
     arr = pa.array(seq([]))
     assert len(arr) == 0
@@ -152,15 +171,49 @@ def test_empty_list(seq):
     assert arr.to_pylist() == []
 
 
-def test_sequence_all_none():
-    arr = pa.array([None, None])
+@parametrize_with_iterable_types
+def test_nested_lists(seq):
+    data = [[], [1, 2], None]
+    arr = pa.array(seq(data))
+    assert len(arr) == 3
+    assert arr.null_count == 1
+    assert arr.type == pa.list_(pa.int64())
+    assert arr.to_pylist() == data
+    # With explicit type
+    arr = pa.array(seq(data), type=pa.list_(pa.int32()))
+    assert len(arr) == 3
+    assert arr.null_count == 1
+    assert arr.type == pa.list_(pa.int32())
+    assert arr.to_pylist() == data
+
+
+@parametrize_with_iterable_types
+def test_list_with_non_list(seq):
+    # List types don't accept non-sequences
+    with pytest.raises(pa.ArrowTypeError):
+        pa.array(seq([[], [1, 2], 3]), type=pa.list_(pa.int64()))
+
+
+@parametrize_with_iterable_types
+def test_nested_arrays(seq):
+    arr = pa.array(seq([np.array([], dtype=np.int64),
+                        np.array([1, 2], dtype=np.int64), None]))
+    assert len(arr) == 3
+    assert arr.null_count == 1
+    assert arr.type == pa.list_(pa.int64())
+    assert arr.to_pylist() == [[], [1, 2], None]
+
+
+@parametrize_with_iterable_types
+def test_sequence_all_none(seq):
+    arr = pa.array(seq([None, None]))
     assert len(arr) == 2
     assert arr.null_count == 2
     assert arr.type == pa.null()
     assert arr.to_pylist() == [None, None]
 
 
-@pytest.mark.parametrize("seq", [_as_list, _as_tuple, _as_dict_values])
+@parametrize_with_iterable_types
 @pytest.mark.parametrize("np_scalar_pa_type", int_type_pairs)
 def test_sequence_integer(seq, np_scalar_pa_type):
     np_scalar, pa_type = np_scalar_pa_type
@@ -173,7 +226,41 @@ def test_sequence_integer(seq, np_scalar_pa_type):
     assert arr.to_pylist() == expected
 
 
-@pytest.mark.parametrize("seq", [_as_list, _as_tuple, _as_dict_values])
+@parametrize_with_iterable_types
+@pytest.mark.parametrize("np_scalar_pa_type", int_type_pairs)
+def test_sequence_integer_np_nan(seq, np_scalar_pa_type):
+    # ARROW-2806: numpy.nan is a double value and thus should produce
+    # a double array.
+    _, pa_type = np_scalar_pa_type
+    with pytest.raises(ValueError):
+        pa.array(seq([np.nan]), type=pa_type, from_pandas=False)
+
+    arr = pa.array(seq([np.nan]), type=pa_type, from_pandas=True)
+    expected = [None]
+    assert len(arr) == 1
+    assert arr.null_count == 1
+    assert arr.type == pa_type
+    assert arr.to_pylist() == expected
+
+
+@parametrize_with_iterable_types
+@pytest.mark.parametrize("np_scalar_pa_type", int_type_pairs)
+def test_sequence_integer_nested_np_nan(seq, np_scalar_pa_type):
+    # ARROW-2806: numpy.nan is a double value and thus should produce
+    # a double array.
+    _, pa_type = np_scalar_pa_type
+    with pytest.raises(ValueError):
+        pa.array(seq([[np.nan]]), type=pa.list_(pa_type), from_pandas=False)
+
+    arr = pa.array(seq([[np.nan]]), type=pa.list_(pa_type), from_pandas=True)
+    expected = [[None]]
+    assert len(arr) == 1
+    assert arr.null_count == 0
+    assert arr.type == pa.list_(pa_type)
+    assert arr.to_pylist() == expected
+
+
+@parametrize_with_iterable_types
 def test_sequence_integer_inferred(seq):
     expected = [1, None, 3, None]
     arr = pa.array(seq(expected))
@@ -183,7 +270,7 @@ def test_sequence_integer_inferred(seq):
     assert arr.to_pylist() == expected
 
 
-@pytest.mark.parametrize("seq", [_as_list, _as_tuple, _as_dict_values])
+@parametrize_with_iterable_types
 @pytest.mark.parametrize("np_scalar_pa_type", int_type_pairs)
 def test_sequence_numpy_integer(seq, np_scalar_pa_type):
     np_scalar, pa_type = np_scalar_pa_type
@@ -197,7 +284,7 @@ def test_sequence_numpy_integer(seq, np_scalar_pa_type):
     assert arr.to_pylist() == expected
 
 
-@pytest.mark.parametrize("seq", [_as_list, _as_tuple, _as_dict_values])
+@parametrize_with_iterable_types
 @pytest.mark.parametrize("np_scalar_pa_type", int_type_pairs)
 def test_sequence_numpy_integer_inferred(seq, np_scalar_pa_type):
     np_scalar, pa_type = np_scalar_pa_type
@@ -211,8 +298,21 @@ def test_sequence_numpy_integer_inferred(seq, np_scalar_pa_type):
     arr = pa.array(seq(expected))
     assert len(arr) == 6
     assert arr.null_count == 2
-    assert arr.type == pa.int64()
+    assert arr.type == pa_type
     assert arr.to_pylist() == expected
+
+
+@pytest.mark.xfail(reason="Type inference for uint64 not implemented",
+                   raises=pa.ArrowException)
+def test_uint64_max_convert():
+    data = [0, np.iinfo(np.uint64).max]
+
+    arr = pa.array(data, type=pa.uint64())
+    expected = pa.array(np.array(data, dtype='uint64'))
+    assert arr.equals(expected)
+
+    arr_inferred = pa.array(data)
+    assert arr_inferred.equals(expected)
 
 
 @pytest.mark.parametrize("bits", [8, 16, 32, 64])
@@ -235,6 +335,20 @@ def test_unsigned_integer_overflow(bits):
         pa.array([-1], ty)
 
 
+def test_convert_with_mask():
+    data = [1, 2, 3, 4, 5]
+    mask = np.array([False, True, False, False, True])
+
+    result = pa.array(data, mask=mask)
+    expected = pa.array([1, None, 3, 4, None])
+
+    assert result.equals(expected)
+
+    # Mask wrong length
+    with pytest.raises(ValueError):
+        pa.array(data, mask=mask[1:])
+
+
 def test_garbage_collection():
     import gc
 
@@ -248,7 +362,7 @@ def test_garbage_collection():
 
 
 def test_sequence_double():
-    data = [1.5, 1, None, 2.5, None, None]
+    data = [1.5, 1., None, 2.5, None, None]
     arr = pa.array(data)
     assert len(arr) == 6
     assert arr.null_count == 3
@@ -256,15 +370,126 @@ def test_sequence_double():
     assert arr.to_pylist() == data
 
 
-@pytest.mark.parametrize("seq", [_as_list, _as_tuple, _as_dict_values])
+def test_double_auto_coerce_from_integer():
+    # Done as part of ARROW-2814
+    data = [1.5, 1., None, 2.5, None, None]
+    arr = pa.array(data)
+
+    data2 = [1.5, 1, None, 2.5, None, None]
+    arr2 = pa.array(data2)
+
+    assert arr.equals(arr2)
+
+    data3 = [1, 1.5, None, 2.5, None, None]
+    arr3 = pa.array(data3)
+
+    data4 = [1., 1.5, None, 2.5, None, None]
+    arr4 = pa.array(data4)
+
+    assert arr3.equals(arr4)
+
+
+def test_double_integer_coerce_representable_range():
+    valid_values = [1.5, 1, 2, None, 1 << 53, -(1 << 53)]
+    invalid_values = [1.5, 1, 2, None, (1 << 53) + 1]
+    invalid_values2 = [1.5, 1, 2, None, -((1 << 53) + 1)]
+
+    # it works
+    pa.array(valid_values)
+
+    # it fails
+    with pytest.raises(ValueError):
+        pa.array(invalid_values)
+
+    with pytest.raises(ValueError):
+        pa.array(invalid_values2)
+
+
+def test_float32_integer_coerce_representable_range():
+    f32 = np.float32
+    valid_values = [f32(1.5), 1 << 24, -(1 << 24)]
+    invalid_values = [f32(1.5), (1 << 24) + 1]
+    invalid_values2 = [f32(1.5), -((1 << 24) + 1)]
+
+    # it works
+    pa.array(valid_values, type=pa.float32())
+
+    # it fails
+    with pytest.raises(ValueError):
+        pa.array(invalid_values, type=pa.float32())
+
+    with pytest.raises(ValueError):
+        pa.array(invalid_values2, type=pa.float32())
+
+
+def test_mixed_sequence_errors():
+    with pytest.raises(ValueError, match="tried to convert to boolean"):
+        pa.array([True, 'foo'], type=pa.bool_())
+
+    with pytest.raises(ValueError, match="tried to convert to float32"):
+        pa.array([1.5, 'foo'], type=pa.float32())
+
+    with pytest.raises(ValueError, match="tried to convert to double"):
+        pa.array([1.5, 'foo'])
+
+
+@parametrize_with_iterable_types
 @pytest.mark.parametrize("np_scalar", [np.float16, np.float32, np.float64])
-def test_sequence_numpy_double(seq, np_scalar):
-    data = [np_scalar(1.5), np_scalar(1), None, np_scalar(2.5), None, None]
-    arr = pa.array(seq(data))
+@pytest.mark.parametrize("from_pandas", [True, False])
+def test_sequence_numpy_double(seq, np_scalar, from_pandas):
+    data = [np_scalar(1.5), np_scalar(1), None, np_scalar(2.5), None, np.nan]
+    arr = pa.array(seq(data), from_pandas=from_pandas)
     assert len(arr) == 6
-    assert arr.null_count == 3
+    if from_pandas:
+        assert arr.null_count == 3
+    else:
+        assert arr.null_count == 2
     assert arr.type == pa.float64()
-    assert arr.to_pylist() == data
+
+    assert arr.to_pylist()[:4] == data[:4]
+    if from_pandas:
+        assert arr.to_pylist()[5] is None
+    else:
+        assert np.isnan(arr.to_pylist()[5])
+
+
+@pytest.mark.parametrize("from_pandas", [True, False])
+@pytest.mark.parametrize("inner_seq", [np.array, list])
+def test_ndarray_nested_numpy_double(from_pandas, inner_seq):
+    # ARROW-2806
+    data = np.array([
+        inner_seq([1., 2.]),
+        inner_seq([1., 2., 3.]),
+        inner_seq([np.nan]),
+        None
+    ])
+    arr = pa.array(data, from_pandas=from_pandas)
+    assert len(arr) == 4
+    assert arr.null_count == 1
+    assert arr.type == pa.list_(pa.float64())
+    if from_pandas:
+        assert arr.to_pylist() == [[1.0, 2.0], [1.0, 2.0, 3.0], [None], None]
+    else:
+        np.testing.assert_equal(arr.to_pylist(),
+                                [[1., 2.], [1., 2., 3.], [np.nan], None])
+
+
+def test_nested_ndarray_different_dtypes():
+    data = [
+        np.array([1, 2, 3], dtype='int64'),
+        None,
+        np.array([4, 5, 6], dtype='uint32')
+    ]
+
+    arr = pa.array(data)
+    expected = pa.array([[1, 2, 3], None, [4, 5, 6]],
+                        type=pa.list_(pa.int64()))
+    assert arr.equals(expected)
+
+    t2 = pa.list_(pa.uint32())
+    arr2 = pa.array(data, type=t2)
+    expected2 = expected.cast(t2)
+    assert arr2.equals(expected2)
 
 
 def test_sequence_unicode():
@@ -274,6 +499,22 @@ def test_sequence_unicode():
     assert arr.null_count == 1
     assert arr.type == pa.string()
     assert arr.to_pylist() == data
+
+
+def test_array_mixed_unicode_bytes():
+    values = [u'qux', b'foo', bytearray(b'barz')]
+    b_values = [b'qux', b'foo', b'barz']
+    u_values = [u'qux', u'foo', u'barz']
+
+    arr = pa.array(values)
+    expected = pa.array(b_values, type=pa.binary())
+    assert arr.type == pa.binary()
+    assert arr.equals(expected)
+
+    arr = pa.array(values, type=pa.string())
+    expected = pa.array(u_values, type=pa.string())
+    assert arr.type == pa.string()
+    assert arr.equals(expected)
 
 
 def test_sequence_bytes():
@@ -298,7 +539,7 @@ def test_sequence_utf8_to_unicode():
 
     # test a non-utf8 unicode string
     val = (u'mañana').encode('utf-16-le')
-    with pytest.raises(pa.ArrowException):
+    with pytest.raises(pa.ArrowInvalid):
         pa.array([val], type=pa.string())
 
 
@@ -322,7 +563,7 @@ def test_sequence_date():
             datetime.date(2040, 2, 26)]
     arr = pa.array(data)
     assert len(arr) == 4
-    assert arr.type == pa.date64()
+    assert arr.type == pa.date32()
     assert arr.null_count == 1
     assert arr[0].as_py() == datetime.date(2000, 1, 1)
     assert arr[1].as_py() is None
@@ -330,20 +571,24 @@ def test_sequence_date():
     assert arr[3].as_py() == datetime.date(2040, 2, 26)
 
 
-def test_sequence_date32():
+@pytest.mark.parametrize('input',
+                         [(pa.date32(), [10957, None]),
+                          (pa.date64(), [10957 * 86400000, None])])
+def test_sequence_explicit_types(input):
+    t, ex_values = input
     data = [datetime.date(2000, 1, 1), None]
-    arr = pa.array(data, type=pa.date32())
-
-    data2 = [10957, None]
-    arr2 = pa.array(data2, type=pa.date32())
+    arr = pa.array(data, type=t)
+    arr2 = pa.array(ex_values, type=t)
 
     for x in [arr, arr2]:
         assert len(x) == 2
-        assert x.type == pa.date32()
+        assert x.type == t
         assert x.null_count == 1
         assert x[0].as_py() == datetime.date(2000, 1, 1)
         assert x[1] is pa.NA
 
+
+def test_date32_overflow():
     # Overflow
     data3 = [2**32, None]
     with pytest.raises(pa.ArrowException):
@@ -425,6 +670,55 @@ def test_sequence_timestamp_with_unit():
                                                   23, 34, 123456)
 
 
+def test_datetime_subclassing():
+    class MyDate(datetime.date):
+        pass
+    data = [
+        MyDate(2007, 7, 13),
+    ]
+    date_type = pa.date32()
+    arr_date = pa.array(data, type=date_type)
+    assert len(arr_date) == 1
+    assert arr_date.type == date_type
+    assert arr_date[0].as_py() == datetime.date(2007, 7, 13)
+
+    class MyDatetime(datetime.datetime):
+        pass
+
+    data = [
+        MyDatetime(2007, 7, 13, 1, 23, 34, 123456),
+    ]
+
+    s = pa.timestamp('s')
+    ms = pa.timestamp('ms')
+    us = pa.timestamp('us')
+    ns = pa.timestamp('ns')
+
+    arr_s = pa.array(data, type=s)
+    assert len(arr_s) == 1
+    assert arr_s.type == s
+    assert arr_s[0].as_py() == datetime.datetime(2007, 7, 13, 1,
+                                                 23, 34, 0)
+
+    arr_ms = pa.array(data, type=ms)
+    assert len(arr_ms) == 1
+    assert arr_ms.type == ms
+    assert arr_ms[0].as_py() == datetime.datetime(2007, 7, 13, 1,
+                                                  23, 34, 123000)
+
+    arr_us = pa.array(data, type=us)
+    assert len(arr_us) == 1
+    assert arr_us.type == us
+    assert arr_us[0].as_py() == datetime.datetime(2007, 7, 13, 1,
+                                                  23, 34, 123456)
+
+    arr_ns = pa.array(data, type=ns)
+    assert len(arr_ns) == 1
+    assert arr_ns.type == ns
+    assert arr_ns[0].as_py() == datetime.datetime(2007, 7, 13, 1,
+                                                  23, 34, 123456)
+
+
 def test_sequence_timestamp_from_int_with_unit():
     data = [1]
 
@@ -436,22 +730,26 @@ def test_sequence_timestamp_from_int_with_unit():
     arr_s = pa.array(data, type=s)
     assert len(arr_s) == 1
     assert arr_s.type == s
-    assert str(arr_s[0]) == "Timestamp('1970-01-01 00:00:01')"
+    assert repr(arr_s[0]) == "Timestamp('1970-01-01 00:00:01')"
+    assert str(arr_s[0]) == "1970-01-01 00:00:01"
 
     arr_ms = pa.array(data, type=ms)
     assert len(arr_ms) == 1
     assert arr_ms.type == ms
-    assert str(arr_ms[0]) == "Timestamp('1970-01-01 00:00:00.001000')"
+    assert repr(arr_ms[0]) == "Timestamp('1970-01-01 00:00:00.001000')"
+    assert str(arr_ms[0]) == "1970-01-01 00:00:00.001000"
 
     arr_us = pa.array(data, type=us)
     assert len(arr_us) == 1
     assert arr_us.type == us
-    assert str(arr_us[0]) == "Timestamp('1970-01-01 00:00:00.000001')"
+    assert repr(arr_us[0]) == "Timestamp('1970-01-01 00:00:00.000001')"
+    assert str(arr_us[0]) == "1970-01-01 00:00:00.000001"
 
     arr_ns = pa.array(data, type=ns)
     assert len(arr_ns) == 1
     assert arr_ns.type == ns
-    assert str(arr_ns[0]) == "Timestamp('1970-01-01 00:00:00.000000001')"
+    assert repr(arr_ns[0]) == "Timestamp('1970-01-01 00:00:00.000000001')"
+    assert str(arr_ns[0]) == "1970-01-01 00:00:00.000000001"
 
     with pytest.raises(pa.ArrowException):
         class CustomClass():
@@ -461,33 +759,43 @@ def test_sequence_timestamp_from_int_with_unit():
         pa.array([1, CustomClass()], type=pa.date64())
 
 
-def test_sequence_mixed_nesting_levels():
-    pa.array([1, 2, None])
-    pa.array([[1], [2], None])
-    pa.array([[1], [2], [None]])
-
-    with pytest.raises(pa.ArrowInvalid):
-        pa.array([1, 2, [1]])
-
-    with pytest.raises(pa.ArrowInvalid):
-        pa.array([1, 2, []])
-
-    with pytest.raises(pa.ArrowInvalid):
-        pa.array([[1], [2], [None, [1]]])
-
-
-def test_sequence_list_of_int():
-    data = [[1, 2, 3], [], None, [1, 2]]
+def test_sequence_nesting_levels():
+    data = [1, 2, None]
     arr = pa.array(data)
-    assert len(arr) == 4
-    assert arr.null_count == 1
+    assert arr.type == pa.int64()
+    assert arr.to_pylist() == data
+
+    data = [[1], [2], None]
+    arr = pa.array(data)
     assert arr.type == pa.list_(pa.int64())
     assert arr.to_pylist() == data
+
+    data = [[1], [2, 3, 4], [None]]
+    arr = pa.array(data)
+    assert arr.type == pa.list_(pa.int64())
+    assert arr.to_pylist() == data
+
+    data = [None, [[None, 1]], [[2, 3, 4], None], [None]]
+    arr = pa.array(data)
+    assert arr.type == pa.list_(pa.list_(pa.int64()))
+    assert arr.to_pylist() == data
+
+    exceptions = (pa.ArrowInvalid, pa.ArrowTypeError)
+
+    # Mixed nesting levels are rejected
+    with pytest.raises(exceptions):
+        pa.array([1, 2, [1]])
+
+    with pytest.raises(exceptions):
+        pa.array([1, 2, []])
+
+    with pytest.raises(exceptions):
+        pa.array([[1], [2], [None, [1]]])
 
 
 def test_sequence_mixed_types_fails():
     data = ['a', 1, 2.0]
-    with pytest.raises(pa.ArrowException):
+    with pytest.raises(pa.ArrowTypeError):
         pa.array(data)
 
 
@@ -544,6 +852,14 @@ def test_sequence_decimal_large_integer():
     assert arr.to_pylist() == data
 
 
+def test_sequence_decimal_from_integers():
+    data = [0, 1, -39402950693754869342983]
+    expected = [decimal.Decimal(x) for x in data]
+    type = pa.decimal128(precision=28, scale=5)
+    arr = pa.array(data, type=type)
+    assert arr.to_pylist() == expected
+
+
 def test_range_types():
     arr1 = pa.array(range(3))
     arr2 = pa.array((0, 1, 2))
@@ -559,6 +875,11 @@ def test_empty_range():
 
 
 def test_structarray():
+    arr = pa.StructArray.from_arrays([], names=[])
+    assert arr.type == pa.struct([])
+    assert len(arr) == 0
+    assert arr.to_pylist() == []
+
     ints = pa.array([None, 2, 3], type=pa.int64())
     strs = pa.array([u'a', None, u'c'], type=pa.string())
     bools = pa.array([True, False, None], type=pa.bool_())
@@ -574,6 +895,10 @@ def test_structarray():
 
     pylist = arr.to_pylist()
     assert pylist == expected, (pylist, expected)
+
+    # len(names) != len(arrays)
+    with pytest.raises(ValueError):
+        pa.StructArray.from_arrays([ints], ['ints', 'strs'])
 
 
 def test_struct_from_dicts():
@@ -611,7 +936,13 @@ def test_struct_from_tuples():
     expected = [{'a': 5, 'b': 'foo', 'c': True},
                 {'a': 6, 'b': 'bar', 'c': False}]
     arr = pa.array(data, type=ty)
+
+    data_as_ndarray = np.empty(len(data), dtype=object)
+    data_as_ndarray[:] = data
+    arr2 = pa.array(data_as_ndarray, type=ty)
     assert arr.to_pylist() == expected
+
+    assert arr.equals(arr2)
 
     # With omitted values
     data = [(5, 'foo', None),
@@ -638,6 +969,55 @@ def test_struct_from_mixed_sequence():
             {'a': 6, 'b': 'bar', 'c': False}]
     with pytest.raises(TypeError):
         pa.array(data, type=ty)
+
+
+def test_struct_from_dicts_inference():
+    expected_type = pa.struct([pa.field('a', pa.int64()),
+                               pa.field('b', pa.string()),
+                               pa.field('c', pa.bool_())])
+    data = [{'a': 5, 'b': u'foo', 'c': True},
+            {'a': 6, 'b': u'bar', 'c': False}]
+    arr = pa.array(data)
+    check_struct_type(arr.type, expected_type)
+    assert arr.to_pylist() == data
+
+    # With omitted values
+    data = [{'a': 5, 'c': True},
+            None,
+            {},
+            {'a': None, 'b': u'bar'}]
+    expected = [{'a': 5, 'b': None, 'c': True},
+                None,
+                {'a': None, 'b': None, 'c': None},
+                {'a': None, 'b': u'bar', 'c': None}]
+    arr = pa.array(data)
+    data_as_ndarray = np.empty(len(data), dtype=object)
+    data_as_ndarray[:] = data
+    arr2 = pa.array(data)
+
+    check_struct_type(arr.type, expected_type)
+    assert arr.to_pylist() == expected
+    assert arr.equals(arr2)
+
+    # Nested
+    expected_type = pa.struct([
+        pa.field('a', pa.struct([pa.field('aa', pa.list_(pa.int64())),
+                                 pa.field('ab', pa.bool_())])),
+        pa.field('b', pa.string())])
+    data = [{'a': {'aa': [5, 6], 'ab': True}, 'b': 'foo'},
+            {'a': {'aa': None, 'ab': False}, 'b': None},
+            {'a': None, 'b': 'bar'}]
+    arr = pa.array(data)
+    assert arr.to_pylist() == data
+
+    # Edge cases
+    arr = pa.array([{}])
+    assert arr.type == pa.struct([])
+    assert arr.to_pylist() == [{}]
+
+    # Mixing structs and scalars is rejected
+    with pytest.raises((pa.ArrowInvalid, pa.ArrowTypeError)):
+        pa.array([1, {'a': 2}])
 
 
 def test_structarray_from_arrays_coerce():

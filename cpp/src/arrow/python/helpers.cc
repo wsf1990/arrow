@@ -15,6 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// helpers.h includes a NumPy header, so we include this first
+#include "arrow/python/numpy_interop.h"
+
+#include "arrow/python/helpers.h"
+
 #include <limits>
 #include <sstream>
 #include <type_traits>
@@ -22,12 +27,15 @@
 
 #include "arrow/python/common.h"
 #include "arrow/python/decimal.h"
-#include "arrow/python/helpers.h"
+#include "arrow/util/checked_cast.h"
 #include "arrow/util/logging.h"
 
 #include <arrow/api.h>
 
 namespace arrow {
+
+using internal::checked_cast;
+
 namespace py {
 
 #define GET_PRIMITIVE_TYPE(NAME, FACTORY) \
@@ -152,84 +160,14 @@ Status ImportFromModule(const OwnedRef& module, const std::string& name, OwnedRe
   return Status::OK();
 }
 
-Status BuilderAppend(BinaryBuilder* builder, PyObject* obj, bool* is_full) {
-  PyBytesView view;
-  // XXX For some reason, we must accept unicode objects here
-  RETURN_NOT_OK(view.FromString(obj));
-  int32_t length;
-  RETURN_NOT_OK(CastSize(view.size, &length));
-  // Did we reach the builder size limit?
-  if (ARROW_PREDICT_FALSE(builder->value_data_length() + length > kBinaryMemoryLimit)) {
-    if (is_full) {
-      *is_full = true;
-      return Status::OK();
-    } else {
-      return Status::Invalid("Maximum array size reached (2GB)");
-    }
-  }
-  RETURN_NOT_OK(builder->Append(view.bytes, length));
-  if (is_full) {
-    *is_full = false;
-  }
-  return Status::OK();
-}
-
-Status BuilderAppend(FixedSizeBinaryBuilder* builder, PyObject* obj, bool* is_full) {
-  PyBytesView view;
-  // XXX For some reason, we must accept unicode objects here
-  RETURN_NOT_OK(view.FromString(obj));
-  const auto expected_length =
-      static_cast<const FixedSizeBinaryType&>(*builder->type()).byte_width();
-  if (ARROW_PREDICT_FALSE(view.size != expected_length)) {
-    std::stringstream ss;
-    ss << "Got bytestring of length " << view.size << " (expected " << expected_length
-       << ")";
-    return Status::Invalid(ss.str());
-  }
-  // Did we reach the builder size limit?
-  if (ARROW_PREDICT_FALSE(builder->value_data_length() + view.size >
-                          kBinaryMemoryLimit)) {
-    if (is_full) {
-      *is_full = true;
-      return Status::OK();
-    } else {
-      return Status::Invalid("Maximum array size reached (2GB)");
-    }
-  }
-  RETURN_NOT_OK(builder->Append(view.bytes));
-  if (is_full) {
-    *is_full = false;
-  }
-  return Status::OK();
-}
-
-Status BuilderAppend(StringBuilder* builder, PyObject* obj, bool check_valid,
-                     bool* is_full) {
-  PyBytesView view;
-  RETURN_NOT_OK(view.FromString(obj, check_valid));
-  int32_t length;
-  RETURN_NOT_OK(CastSize(view.size, &length));
-  // Did we reach the builder size limit?
-  if (ARROW_PREDICT_FALSE(builder->value_data_length() + length > kBinaryMemoryLimit)) {
-    if (is_full) {
-      *is_full = true;
-      return Status::OK();
-    } else {
-      return Status::Invalid("Maximum array size reached (2GB)");
-    }
-  }
-  RETURN_NOT_OK(builder->Append(view.bytes, length));
-  if (is_full) {
-    *is_full = false;
-  }
-  return Status::OK();
-}
-
 namespace {
 
-Status IntegerOverflowStatus(const std::string& overflow_message) {
+Status IntegerOverflowStatus(PyObject* obj, const std::string& overflow_message) {
   if (overflow_message.empty()) {
-    return Status::Invalid("Value too large to fit in C integer type");
+    std::string obj_as_stdstring;
+    RETURN_NOT_OK(PyObject_StdStringStr(obj, &obj_as_stdstring));
+    return Status::Invalid("Value ", obj_as_stdstring,
+                           " too large to fit in C integer type");
   } else {
     return Status::Invalid(overflow_message);
   }
@@ -249,7 +187,7 @@ Status CIntFromPythonImpl(PyObject* obj, Int* out, const std::string& overflow_m
     }
     if (ARROW_PREDICT_FALSE(value < std::numeric_limits<Int>::min() ||
                             value > std::numeric_limits<Int>::max())) {
-      return IntegerOverflowStatus(overflow_message);
+      return IntegerOverflowStatus(obj, overflow_message);
     }
     *out = static_cast<Int>(value);
   } else {
@@ -259,7 +197,7 @@ Status CIntFromPythonImpl(PyObject* obj, Int* out, const std::string& overflow_m
     }
     if (ARROW_PREDICT_FALSE(value < std::numeric_limits<Int>::min() ||
                             value > std::numeric_limits<Int>::max())) {
-      return IntegerOverflowStatus(overflow_message);
+      return IntegerOverflowStatus(obj, overflow_message);
     }
     *out = static_cast<Int>(value);
   }
@@ -289,7 +227,7 @@ Status CIntFromPythonImpl(PyObject* obj, Int* out, const std::string& overflow_m
       RETURN_IF_PYERROR();
     }
     if (ARROW_PREDICT_FALSE(value > std::numeric_limits<Int>::max())) {
-      return IntegerOverflowStatus(overflow_message);
+      return IntegerOverflowStatus(obj, overflow_message);
     }
     *out = static_cast<Int>(value);
   } else {
@@ -298,7 +236,7 @@ Status CIntFromPythonImpl(PyObject* obj, Int* out, const std::string& overflow_m
       RETURN_IF_PYERROR();
     }
     if (ARROW_PREDICT_FALSE(value > std::numeric_limits<Int>::max())) {
-      return IntegerOverflowStatus(overflow_message);
+      return IntegerOverflowStatus(obj, overflow_message);
     }
     *out = static_cast<Int>(value);
   }
@@ -324,13 +262,115 @@ template Status CIntFromPython(PyObject*, uint16_t*, const std::string&);
 template Status CIntFromPython(PyObject*, uint32_t*, const std::string&);
 template Status CIntFromPython(PyObject*, uint64_t*, const std::string&);
 
+inline bool MayHaveNaN(PyObject* obj) {
+  // Some core types can be very quickly type-checked and do not allow NaN values
+#if PYARROW_IS_PY2
+  const int64_t non_nan_tpflags = Py_TPFLAGS_INT_SUBCLASS | Py_TPFLAGS_LONG_SUBCLASS |
+                                  Py_TPFLAGS_LIST_SUBCLASS | Py_TPFLAGS_TUPLE_SUBCLASS |
+                                  Py_TPFLAGS_STRING_SUBCLASS |
+                                  Py_TPFLAGS_UNICODE_SUBCLASS | Py_TPFLAGS_DICT_SUBCLASS |
+                                  Py_TPFLAGS_BASE_EXC_SUBCLASS | Py_TPFLAGS_TYPE_SUBCLASS;
+#else
+  const int64_t non_nan_tpflags = Py_TPFLAGS_LONG_SUBCLASS | Py_TPFLAGS_LIST_SUBCLASS |
+                                  Py_TPFLAGS_TUPLE_SUBCLASS | Py_TPFLAGS_BYTES_SUBCLASS |
+                                  Py_TPFLAGS_UNICODE_SUBCLASS | Py_TPFLAGS_DICT_SUBCLASS |
+                                  Py_TPFLAGS_BASE_EXC_SUBCLASS | Py_TPFLAGS_TYPE_SUBCLASS;
+#endif
+  return !PyType_HasFeature(Py_TYPE(obj), non_nan_tpflags);
+}
+
 bool PyFloat_IsNaN(PyObject* obj) {
   return PyFloat_Check(obj) && std::isnan(PyFloat_AsDouble(obj));
 }
 
 bool PandasObjectIsNull(PyObject* obj) {
-  return obj == Py_None || obj == numpy_nan || PyFloat_IsNaN(obj) ||
-         (internal::PyDecimal_Check(obj) && internal::PyDecimal_ISNAN(obj));
+  if (!MayHaveNaN(obj)) {
+    return false;
+  }
+  if (obj == Py_None) {
+    return true;
+  }
+  if (PyFloat_IsNaN(obj) ||
+      (internal::PyDecimal_Check(obj) && internal::PyDecimal_ISNAN(obj))) {
+    return true;
+  }
+  return false;
+}
+
+Status InvalidValue(PyObject* obj, const std::string& why) {
+  std::string obj_as_str;
+  RETURN_NOT_OK(internal::PyObject_StdStringStr(obj, &obj_as_str));
+  return Status::Invalid("Could not convert ", obj_as_str, " with type ",
+                         Py_TYPE(obj)->tp_name, ": ", why);
+}
+
+Status UnboxIntegerAsInt64(PyObject* obj, int64_t* out) {
+  if (PyLong_Check(obj)) {
+    int overflow = 0;
+    *out = PyLong_AsLongLongAndOverflow(obj, &overflow);
+    if (overflow) {
+      return Status::Invalid("PyLong is too large to fit int64");
+    }
+#if PY_MAJOR_VERSION < 3
+  } else if (PyInt_Check(obj)) {
+    *out = static_cast<int64_t>(PyInt_AS_LONG(obj));
+#endif
+  } else if (PyArray_IsScalar(obj, UByte)) {
+    *out = reinterpret_cast<PyUByteScalarObject*>(obj)->obval;
+  } else if (PyArray_IsScalar(obj, Short)) {
+    *out = reinterpret_cast<PyShortScalarObject*>(obj)->obval;
+  } else if (PyArray_IsScalar(obj, UShort)) {
+    *out = reinterpret_cast<PyUShortScalarObject*>(obj)->obval;
+  } else if (PyArray_IsScalar(obj, Int)) {
+    *out = reinterpret_cast<PyIntScalarObject*>(obj)->obval;
+  } else if (PyArray_IsScalar(obj, UInt)) {
+    *out = reinterpret_cast<PyUIntScalarObject*>(obj)->obval;
+  } else if (PyArray_IsScalar(obj, Long)) {
+    *out = reinterpret_cast<PyLongScalarObject*>(obj)->obval;
+  } else if (PyArray_IsScalar(obj, ULong)) {
+    *out = reinterpret_cast<PyULongScalarObject*>(obj)->obval;
+  } else if (PyArray_IsScalar(obj, LongLong)) {
+    *out = reinterpret_cast<PyLongLongScalarObject*>(obj)->obval;
+  } else if (PyArray_IsScalar(obj, Int64)) {
+    *out = reinterpret_cast<PyInt64ScalarObject*>(obj)->obval;
+  } else if (PyArray_IsScalar(obj, ULongLong)) {
+    *out = reinterpret_cast<PyULongLongScalarObject*>(obj)->obval;
+  } else if (PyArray_IsScalar(obj, UInt64)) {
+    *out = reinterpret_cast<PyUInt64ScalarObject*>(obj)->obval;
+  } else {
+    return Status::Invalid("Integer scalar type not recognized");
+  }
+  return Status::OK();
+}
+
+Status IntegerScalarToDoubleSafe(PyObject* obj, double* out) {
+  int64_t value = 0;
+  RETURN_NOT_OK(UnboxIntegerAsInt64(obj, &value));
+
+  constexpr int64_t kDoubleMax = 1LL << 53;
+  constexpr int64_t kDoubleMin = -(1LL << 53);
+
+  if (value < kDoubleMin || value > kDoubleMax) {
+    return Status::Invalid("Integer value ", value, " is outside of the range exactly",
+                           " representable by a IEEE 754 double precision value");
+  }
+  *out = static_cast<double>(value);
+  return Status::OK();
+}
+
+Status IntegerScalarToFloat32Safe(PyObject* obj, float* out) {
+  int64_t value = 0;
+  RETURN_NOT_OK(UnboxIntegerAsInt64(obj, &value));
+
+  constexpr int64_t kFloatMax = 1LL << 24;
+  constexpr int64_t kFloatMin = -(1LL << 24);
+
+  if (value < kFloatMin || value > kFloatMax) {
+    return Status::Invalid("Integer value ", value, " is outside of the range exactly",
+                           " representable by a IEEE 754 single precision value");
+  }
+  *out = static_cast<float>(value);
+  return Status::OK();
 }
 
 }  // namespace internal

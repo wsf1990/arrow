@@ -45,20 +45,20 @@ class _ReadPandasOption(object):
         return table.to_pandas(**options)
 
 
-class RecordBatchStreamReader(lib._RecordBatchReader, _ReadPandasOption):
+class RecordBatchStreamReader(lib._RecordBatchStreamReader, _ReadPandasOption):
     """
     Reader for the Arrow streaming binary format
 
     Parameters
     ----------
-    source : str, pyarrow.NativeFile, or file-like Python object
-        Either a file path, or a readable file object
+    source : bytes/buffer-like, pyarrow.NativeFile, or file-like Python object
+        Either an in-memory buffer, or a readable file object
     """
     def __init__(self, source):
         self._open(source)
 
 
-class RecordBatchStreamWriter(lib._RecordBatchWriter):
+class RecordBatchStreamWriter(lib._RecordBatchStreamWriter):
     """
     Writer for the Arrow streaming binary format
 
@@ -79,8 +79,8 @@ class RecordBatchFileReader(lib._RecordBatchFileReader, _ReadPandasOption):
 
     Parameters
     ----------
-    source : str, pyarrow.NativeFile, or file-like Python object
-        Either a file path, or a readable file object
+    source : bytes/buffer-like, pyarrow.NativeFile, or file-like Python object
+        Either an in-memory buffer, or a readable file object
     footer_offset : int, default None
         If the file is embedded in some larger file, this is the byte offset to
         the very end of the file data
@@ -110,8 +110,8 @@ def open_stream(source):
 
     Parameters
     ----------
-    source : str, pyarrow.NativeFile, or file-like Python object
-        Either a file path, or a readable file object
+    source : bytes/buffer-like, pyarrow.NativeFile, or file-like Python object
+        Either an in-memory buffer, or a readable file object
     footer_offset : int, default None
         If the file is embedded in some larger file, this is the byte offset to
         the very end of the file data
@@ -129,8 +129,8 @@ def open_file(source, footer_offset=None):
 
     Parameters
     ----------
-    source : str, pyarrow.NativeFile, or file-like Python object
-        Either a file path, or a readable file object
+    source : bytes/buffer-like, pyarrow.NativeFile, or file-like Python object
+        Either an in-memory buffer, or a readable file object
     footer_offset : int, default None
         If the file is embedded in some larger file, this is the byte offset to
         the very end of the file data
@@ -165,19 +165,18 @@ def serialize_pandas(df, nthreads=None, preserve_index=True):
     writer = pa.RecordBatchStreamWriter(sink, batch.schema)
     writer.write_batch(batch)
     writer.close()
-    return sink.get_result()
+    return sink.getvalue()
 
 
-def deserialize_pandas(buf, nthreads=None):
+def deserialize_pandas(buf, use_threads=True):
     """Deserialize a buffer protocol compatible object into a pandas DataFrame.
 
     Parameters
     ----------
     buf : buffer
         An object compatible with the buffer protocol
-    nthreads : int, defualt None
-        The number of threads to use to convert the buffer to a DataFrame,
-        default all CPUs
+    use_threads: boolean, default True
+        Whether to parallelize the conversion using multiple threads
 
     Returns
     -------
@@ -186,4 +185,4 @@ def deserialize_pandas(buf, nthreads=None):
     buffer_reader = pa.BufferReader(buf)
     reader = pa.RecordBatchStreamReader(buffer_reader)
     table = reader.read_all()
-    return table.to_pandas(nthreads=nthreads)
+    return table.to_pandas(use_threads=use_threads)

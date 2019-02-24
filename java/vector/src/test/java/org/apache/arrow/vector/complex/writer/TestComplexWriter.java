@@ -1,14 +1,13 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- * <p>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -20,38 +19,39 @@ package org.apache.arrow.vector.complex.writer;
 
 import static org.junit.Assert.*;
 
+import java.math.BigDecimal;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import io.netty.buffer.ArrowBuf;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.SchemaChangeCallBack;
-import org.apache.arrow.vector.Float8Vector;
-import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.Float4Vector;
+import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.SchemaChangeCallBack;
 import org.apache.arrow.vector.complex.ListVector;
 import org.apache.arrow.vector.complex.NonNullableStructVector;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.arrow.vector.complex.UnionVector;
 import org.apache.arrow.vector.complex.impl.ComplexWriterImpl;
 import org.apache.arrow.vector.complex.impl.SingleStructReaderImpl;
+import org.apache.arrow.vector.complex.impl.SingleStructWriter;
 import org.apache.arrow.vector.complex.impl.UnionListReader;
 import org.apache.arrow.vector.complex.impl.UnionListWriter;
 import org.apache.arrow.vector.complex.impl.UnionReader;
 import org.apache.arrow.vector.complex.impl.UnionWriter;
-import org.apache.arrow.vector.complex.impl.SingleStructWriter;
-import org.apache.arrow.vector.complex.reader.IntReader;
-import org.apache.arrow.vector.complex.reader.Float8Reader;
-import org.apache.arrow.vector.complex.reader.Float4Reader;
-import org.apache.arrow.vector.complex.reader.BigIntReader;
 import org.apache.arrow.vector.complex.reader.BaseReader.StructReader;
+import org.apache.arrow.vector.complex.reader.BigIntReader;
 import org.apache.arrow.vector.complex.reader.FieldReader;
+import org.apache.arrow.vector.complex.reader.Float4Reader;
+import org.apache.arrow.vector.complex.reader.Float8Reader;
+import org.apache.arrow.vector.complex.reader.IntReader;
 import org.apache.arrow.vector.complex.writer.BaseWriter.ComplexWriter;
 import org.apache.arrow.vector.complex.writer.BaseWriter.ListWriter;
 import org.apache.arrow.vector.complex.writer.BaseWriter.StructWriter;
+import org.apache.arrow.vector.holders.DecimalHolder;
 import org.apache.arrow.vector.holders.IntHolder;
 import org.apache.arrow.vector.holders.NullableTimeStampNanoTZHolder;
 import org.apache.arrow.vector.types.pojo.ArrowType;
@@ -65,6 +65,7 @@ import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.util.CallBack;
 import org.apache.arrow.vector.util.DateUtility;
+import org.apache.arrow.vector.util.DecimalUtility;
 import org.apache.arrow.vector.util.JsonStringArrayList;
 import org.apache.arrow.vector.util.JsonStringHashMap;
 import org.apache.arrow.vector.util.Text;
@@ -72,6 +73,8 @@ import org.apache.arrow.vector.util.TransferPair;
 import org.joda.time.LocalDateTime;
 import org.junit.Assert;
 import org.junit.Test;
+
+import io.netty.buffer.ArrowBuf;
 
 public class TestComplexWriter {
 
@@ -112,7 +115,8 @@ public class TestComplexWriter {
   }
 
   private NonNullableStructVector populateStructVector(CallBack callBack) {
-    NonNullableStructVector parent = new NonNullableStructVector("parent", allocator, new FieldType(false, Struct.INSTANCE, null, null), callBack);
+    NonNullableStructVector parent =
+        new NonNullableStructVector("parent", allocator, new FieldType(false, Struct.INSTANCE, null, null), callBack);
     ComplexWriter writer = new ComplexWriterImpl("root", parent);
     StructWriter rootWriter = writer.rootAsStruct();
     IntWriter intWriter = rootWriter.integer("int");
@@ -149,7 +153,7 @@ public class TestComplexWriter {
   }
 
   /**
-   * This test is similar to {@link #nullableStruct()} ()} but we get the inner struct writer once at the beginning
+   * This test is similar to {@link #nullableStruct()} ()} but we get the inner struct writer once at the beginning.
    */
   @Test
   public void nullableStruct2() {
@@ -249,6 +253,41 @@ public class TestComplexWriter {
   }
 
   @Test
+  public void listDecimalType() {
+    ListVector listVector = ListVector.empty("list", allocator);
+    listVector.allocateNew();
+    UnionListWriter listWriter = new UnionListWriter(listVector);
+    DecimalHolder holder = new DecimalHolder();
+    holder.buffer = allocator.buffer(DecimalUtility.DECIMAL_BYTE_LENGTH);
+    for (int i = 0; i < COUNT; i++) {
+      listWriter.startList();
+      for (int j = 0; j < i % 7; j++) {
+        if (j % 2 == 0) {
+          listWriter.writeDecimal(new BigDecimal(j));
+        } else {
+          DecimalUtility.writeBigDecimalToArrowBuf(new BigDecimal(j), holder.buffer, 0);
+          holder.start = 0;
+          holder.scale = 0;
+          holder.precision = 10;
+          listWriter.write(holder);
+        }
+      }
+      listWriter.endList();
+    }
+    listWriter.setValueCount(COUNT);
+    UnionListReader listReader = new UnionListReader(listVector);
+    for (int i = 0; i < COUNT; i++) {
+      listReader.setPosition(i);
+      for (int j = 0; j < i % 7; j++) {
+        listReader.next();
+        Object expected = new BigDecimal(j);
+        Object actual = listReader.reader().readBigDecimal();
+        assertEquals(expected, actual);
+      }
+    }
+  }
+
+  @Test
   public void listScalarTypeNullable() {
     ListVector listVector = ListVector.empty("list", allocator);
     listVector.allocateNew();
@@ -328,7 +367,7 @@ public class TestComplexWriter {
   }
 
   /**
-   * This test is similar to {@link #listListType()} but we get the inner list writer once at the beginning
+   * This test is similar to {@link #listListType()} but we get the inner list writer once at the beginning.
    */
   @Test
   public void listListType2() {
@@ -395,7 +434,7 @@ public class TestComplexWriter {
   }
 
   /**
-   * This test is similar to {@link #unionListListType()} but we get the inner list writer once at the beginning
+   * This test is similar to {@link #unionListListType()} but we get the inner list writer once at the beginning.
    */
   @Test
   public void unionListListType2() {
@@ -516,7 +555,7 @@ public class TestComplexWriter {
   }
 
   /**
-   * Even without writing to the writer, the union schema is created correctly
+   * Even without writing to the writer, the union schema is created correctly.
    */
   @Test
   public void promotableWriterSchema() {
@@ -935,11 +974,16 @@ public class TestComplexWriter {
     Float4Vector float4Vector = (Float4Vector)parent.getChild("float4Field");
     Float8Vector float8Vector = (Float8Vector)parent.getChild("float8Field");
 
-    assertEquals(initialCapacity, singleStructWriter.getValueCapacity());
-    assertEquals(initialCapacity, intVector.getValueCapacity());
-    assertEquals(initialCapacity, bigIntVector.getValueCapacity());
-    assertEquals(initialCapacity, float4Vector.getValueCapacity());
-    assertEquals(initialCapacity, float8Vector.getValueCapacity());
+    int capacity = singleStructWriter.getValueCapacity();
+    assertTrue(capacity >= initialCapacity && capacity <  initialCapacity * 2);
+    capacity = intVector.getValueCapacity();
+    assertTrue(capacity >= initialCapacity && capacity <  initialCapacity * 2);
+    capacity = bigIntVector.getValueCapacity();
+    assertTrue(capacity >= initialCapacity && capacity <  initialCapacity * 2);
+    capacity = float4Vector.getValueCapacity();
+    assertTrue(capacity >= initialCapacity && capacity <  initialCapacity * 2);
+    capacity = float8Vector.getValueCapacity();
+    assertTrue(capacity >= initialCapacity && capacity <  initialCapacity * 2);
 
     StructReader singleStructReader = new SingleStructReaderImpl(parent);
 

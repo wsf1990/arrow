@@ -15,6 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <tuple>
@@ -22,8 +25,9 @@
 #include <gtest/gtest.h>
 
 #include "arrow/status.h"
-#include "arrow/test-util.h"
+#include "arrow/testing/gtest_util.h"
 #include "arrow/util/decimal.h"
+#include "arrow/util/macros.h"
 
 namespace arrow {
 
@@ -378,6 +382,208 @@ TEST(Decimal128Test, TestNoDecimalPointExponential) {
   ASSERT_EQ(10, value.low_bits());
   ASSERT_EQ(2, precision);
   ASSERT_EQ(0, scale);
+}
+
+TEST(Decimal128Test, TestFromBigEndian) {
+  // We test out a variety of scenarios:
+  //
+  // * Positive values that are left shifted
+  //   and filled in with the same bit pattern
+  // * Negated of the positive values
+  // * Complement of the positive values
+  //
+  // For the positive values, we can call FromBigEndian
+  // with a length that is less than 16, whereas we must
+  // pass all 16 bytes for the negative and complement.
+  //
+  // We use a number of bit patterns to increase the coverage
+  // of scenarios
+  for (int32_t start : {1, 15, /* 00001111 */
+                        85,    /* 01010101 */
+                        127 /* 01111111 */}) {
+    Decimal128 value(start);
+    for (int ii = 0; ii < 16; ++ii) {
+      auto little_endian = value.ToBytes();
+      std::reverse(little_endian.begin(), little_endian.end());
+      Decimal128 out;
+      // Limit the number of bytes we are passing to make
+      // sure that it works correctly. That's why all of the
+      // 'start' values don't have a 1 in the most significant
+      // bit place
+      ASSERT_OK(Decimal128::FromBigEndian(little_endian.data() + 15 - ii, ii + 1, &out));
+      ASSERT_EQ(value, out);
+
+      // Negate it and convert to big endian
+      auto negated = -value;
+      little_endian = negated.ToBytes();
+      std::reverse(little_endian.begin(), little_endian.end());
+      // The sign bit is looked up in the MSB
+      ASSERT_OK(Decimal128::FromBigEndian(little_endian.data() + 15 - ii, ii + 1, &out));
+      ASSERT_EQ(negated, out);
+
+      // Take the complement and convert to big endian
+      auto complement = ~value;
+      little_endian = complement.ToBytes();
+      std::reverse(little_endian.begin(), little_endian.end());
+      ASSERT_OK(Decimal128::FromBigEndian(little_endian.data(), 16, &out));
+      ASSERT_EQ(complement, out);
+
+      value <<= 8;
+      value += Decimal128(start);
+    }
+  }
+}
+
+TEST(Decimal128Test, TestFromBigEndianBadLength) {
+  Decimal128 out;
+  ASSERT_RAISES(Invalid, Decimal128::FromBigEndian(0, -1, &out));
+  ASSERT_RAISES(Invalid, Decimal128::FromBigEndian(0, 17, &out));
+}
+
+TEST(Decimal128Test, TestToInteger) {
+  Decimal128 value1("1234");
+  int32_t out1;
+
+  Decimal128 value2("-1234");
+  int64_t out2;
+
+  ASSERT_OK(value1.ToInteger(&out1));
+  ASSERT_EQ(1234, out1);
+
+  ASSERT_OK(value1.ToInteger(&out2));
+  ASSERT_EQ(1234, out2);
+
+  ASSERT_OK(value2.ToInteger(&out1));
+  ASSERT_EQ(-1234, out1);
+
+  ASSERT_OK(value2.ToInteger(&out2));
+  ASSERT_EQ(-1234, out2);
+
+  Decimal128 invalid_int32(static_cast<int64_t>(std::pow(2, 31)));
+  ASSERT_RAISES(Invalid, invalid_int32.ToInteger(&out1));
+
+  Decimal128 invalid_int64("12345678912345678901");
+  ASSERT_RAISES(Invalid, invalid_int64.ToInteger(&out2));
+}
+
+TEST(Decimal128Test, Multiply) {
+  Decimal128 result;
+
+  result = Decimal128("301") * Decimal128("201");
+  ASSERT_EQ(result.ToIntegerString(), "60501");
+
+  result = Decimal128("-301") * Decimal128("201");
+  ASSERT_EQ(result.ToIntegerString(), "-60501");
+
+  result = Decimal128("301") * Decimal128("-201");
+  ASSERT_EQ(result.ToIntegerString(), "-60501");
+
+  result = Decimal128("-301") * Decimal128("-201");
+  ASSERT_EQ(result.ToIntegerString(), "60501");
+}
+
+TEST(Decimal128Test, GetWholeAndFraction) {
+  Decimal128 value("123456");
+  Decimal128 whole;
+  Decimal128 fraction;
+  int32_t out;
+
+  value.GetWholeAndFraction(0, &whole, &fraction);
+  ASSERT_OK(whole.ToInteger(&out));
+  ASSERT_EQ(123456, out);
+  ASSERT_OK(fraction.ToInteger(&out));
+  ASSERT_EQ(0, out);
+
+  value.GetWholeAndFraction(1, &whole, &fraction);
+  ASSERT_OK(whole.ToInteger(&out));
+  ASSERT_EQ(12345, out);
+  ASSERT_OK(fraction.ToInteger(&out));
+  ASSERT_EQ(6, out);
+
+  value.GetWholeAndFraction(5, &whole, &fraction);
+  ASSERT_OK(whole.ToInteger(&out));
+  ASSERT_EQ(1, out);
+  ASSERT_OK(fraction.ToInteger(&out));
+  ASSERT_EQ(23456, out);
+
+  value.GetWholeAndFraction(7, &whole, &fraction);
+  ASSERT_OK(whole.ToInteger(&out));
+  ASSERT_EQ(0, out);
+  ASSERT_OK(fraction.ToInteger(&out));
+  ASSERT_EQ(123456, out);
+}
+
+TEST(Decimal128Test, GetWholeAndFractionNegative) {
+  Decimal128 value("-123456");
+  Decimal128 whole;
+  Decimal128 fraction;
+  int32_t out;
+
+  value.GetWholeAndFraction(0, &whole, &fraction);
+  ASSERT_OK(whole.ToInteger(&out));
+  ASSERT_EQ(-123456, out);
+  ASSERT_OK(fraction.ToInteger(&out));
+  ASSERT_EQ(0, out);
+
+  value.GetWholeAndFraction(1, &whole, &fraction);
+  ASSERT_OK(whole.ToInteger(&out));
+  ASSERT_EQ(-12345, out);
+  ASSERT_OK(fraction.ToInteger(&out));
+  ASSERT_EQ(-6, out);
+
+  value.GetWholeAndFraction(5, &whole, &fraction);
+  ASSERT_OK(whole.ToInteger(&out));
+  ASSERT_EQ(-1, out);
+  ASSERT_OK(fraction.ToInteger(&out));
+  ASSERT_EQ(-23456, out);
+
+  value.GetWholeAndFraction(7, &whole, &fraction);
+  ASSERT_OK(whole.ToInteger(&out));
+  ASSERT_EQ(0, out);
+  ASSERT_OK(fraction.ToInteger(&out));
+  ASSERT_EQ(-123456, out);
+}
+
+TEST(Decimal128Test, IncreaseScale) {
+  Decimal128 result;
+  int32_t out;
+
+  result = Decimal128("1234").IncreaseScaleBy(3);
+  ASSERT_OK(result.ToInteger(&out));
+  ASSERT_EQ(1234000, out);
+
+  result = Decimal128("-1234").IncreaseScaleBy(3);
+  ASSERT_OK(result.ToInteger(&out));
+  ASSERT_EQ(-1234000, out);
+}
+
+TEST(Decimal128Test, ReduceScaleAndRound) {
+  Decimal128 result;
+  int32_t out;
+
+  result = Decimal128("123456").ReduceScaleBy(1, false);
+  ASSERT_OK(result.ToInteger(&out));
+  ASSERT_EQ(12345, out);
+
+  result = Decimal128("123456").ReduceScaleBy(1, true);
+  ASSERT_OK(result.ToInteger(&out));
+  ASSERT_EQ(12346, out);
+
+  result = Decimal128("123451").ReduceScaleBy(1, true);
+  ASSERT_OK(result.ToInteger(&out));
+  ASSERT_EQ(12345, out);
+
+  result = Decimal128("-123789").ReduceScaleBy(2, true);
+  ASSERT_OK(result.ToInteger(&out));
+  ASSERT_EQ(-1238, out);
+
+  result = Decimal128("-123749").ReduceScaleBy(2, true);
+  ASSERT_OK(result.ToInteger(&out));
+  ASSERT_EQ(-1237, out);
+
+  result = Decimal128("-123750").ReduceScaleBy(2, true);
+  ASSERT_OK(result.ToInteger(&out));
+  ASSERT_EQ(-1238, out);
 }
 
 }  // namespace arrow

@@ -19,8 +19,9 @@
 
 #pragma once
 
-#include <arrow-glib/gobject-type.h>
+#include <arrow-glib/decimal128.h>
 #include <arrow-glib/type.h>
+#include <arrow-glib/version.h>
 
 G_BEGIN_DECLS
 
@@ -337,6 +338,25 @@ GType                 garrow_binary_data_type_get_type (void) G_GNUC_CONST;
 GArrowBinaryDataType *garrow_binary_data_type_new      (void);
 
 
+#define GARROW_TYPE_FIXED_SIZE_BINARY_DATA_TYPE (garrow_fixed_size_binary_data_type_get_type())
+G_DECLARE_DERIVABLE_TYPE(GArrowFixedSizeBinaryDataType,
+                         garrow_fixed_size_binary_data_type,
+                         GARROW,
+                         FIXED_SIZE_BINARY_DATA_TYPE,
+                         GArrowDataType)
+struct _GArrowFixedSizeBinaryDataTypeClass
+{
+  GArrowFixedWidthDataTypeClass parent_class;
+};
+
+GARROW_AVAILABLE_IN_0_12
+GArrowFixedSizeBinaryDataType *
+garrow_fixed_size_binary_data_type_new(gint32 byte_width);
+GARROW_AVAILABLE_IN_0_12
+gint32
+garrow_fixed_size_binary_data_type_get_byte_width(GArrowFixedSizeBinaryDataType *data_type);
+
+
 #define GARROW_TYPE_STRING_DATA_TYPE            \
   (garrow_string_data_type_get_type())
 #define GARROW_STRING_DATA_TYPE(obj)                           \
@@ -647,5 +667,41 @@ struct _GArrowTime64DataTypeClass
 GType                 garrow_time64_data_type_get_type (void) G_GNUC_CONST;
 GArrowTime64DataType *garrow_time64_data_type_new      (GArrowTimeUnit unit,
                                                         GError **error);
+
+
+#define GARROW_TYPE_DECIMAL_DATA_TYPE (garrow_decimal_data_type_get_type())
+G_DECLARE_DERIVABLE_TYPE(GArrowDecimalDataType,
+                         garrow_decimal_data_type,
+                         GARROW,
+                         DECIMAL_DATA_TYPE,
+                         GArrowFixedSizeBinaryDataType)
+struct _GArrowDecimalDataTypeClass
+{
+  GArrowFixedSizeBinaryDataTypeClass parent_class;
+};
+
+#ifndef GARROW_DISABLE_DEPRECATED
+GARROW_DEPRECATED_IN_0_12_FOR(garrow_decimal128_data_type_new)
+GArrowDecimalDataType *
+garrow_decimal_data_type_new(gint32 precision, gint32 scale);
+#endif
+gint32 garrow_decimal_data_type_get_precision(GArrowDecimalDataType *decimal_data_type);
+gint32 garrow_decimal_data_type_get_scale(GArrowDecimalDataType *decimal_data_type);
+
+
+#define GARROW_TYPE_DECIMAL128_DATA_TYPE (garrow_decimal128_data_type_get_type())
+G_DECLARE_DERIVABLE_TYPE(GArrowDecimal128DataType,
+                         garrow_decimal128_data_type,
+                         GARROW,
+                         DECIMAL128_DATA_TYPE,
+                         GArrowDecimalDataType)
+struct _GArrowDecimal128DataTypeClass
+{
+  GArrowDecimalDataTypeClass parent_class;
+};
+
+GARROW_AVAILABLE_IN_0_12
+GArrowDecimal128DataType *
+garrow_decimal128_data_type_new(gint32 precision, gint32 scale);
 
 G_END_DECLS

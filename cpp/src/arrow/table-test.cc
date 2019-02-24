@@ -15,18 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include <cstdint>
 #include <memory>
-#include <string>
 #include <vector>
 
-#include "gtest/gtest.h"
+#include <gtest/gtest.h>
 
 #include "arrow/array.h"
 #include "arrow/record_batch.h"
 #include "arrow/status.h"
 #include "arrow/table.h"
-#include "arrow/test-common.h"
-#include "arrow/test-util.h"
+#include "arrow/testing/gtest_common.h"
+#include "arrow/testing/util.h"
 #include "arrow/type.h"
 
 using std::shared_ptr;
@@ -118,11 +118,11 @@ TEST_F(TestChunkedArray, SliceEquals) {
 
   std::shared_ptr<ChunkedArray> slice = one_->Slice(125, 50);
   ASSERT_EQ(slice->length(), 50);
-  test::AssertChunkedEqual(*one_->Slice(125, 50), *slice);
+  AssertChunkedEqual(*one_->Slice(125, 50), *slice);
 
   std::shared_ptr<ChunkedArray> slice2 = one_->Slice(75)->Slice(25)->Slice(25, 50);
   ASSERT_EQ(slice2->length(), 50);
-  test::AssertChunkedEqual(*slice, *slice2);
+  AssertChunkedEqual(*slice, *slice2);
 
   // Making empty slices of a ChunkedArray
   std::shared_ptr<ChunkedArray> slice3 = one_->Slice(one_->length(), 99);
@@ -420,7 +420,7 @@ TEST_F(TestTable, ConcatenateTables) {
 
   ASSERT_OK(ConcatenateTables({t1, t2}, &result));
   ASSERT_OK(Table::FromRecordBatches({batch1, batch2}, &expected));
-  test::AssertTablesEqual(*expected, *result);
+  AssertTablesEqual(*expected, *result);
 
   // Error states
   std::vector<std::shared_ptr<Table>> empty_tables;
@@ -462,6 +462,25 @@ TEST_F(TestTable, RemoveColumn) {
   ex_schema = ::arrow::schema({schema_->field(0), schema_->field(1)});
   ex_columns = {table.column(0), table.column(1)};
   expected = Table::Make(ex_schema, ex_columns);
+  ASSERT_TRUE(result->Equals(*expected));
+}
+
+TEST_F(TestTable, SetColumn) {
+  const int64_t length = 10;
+  MakeExample1(length);
+
+  auto table_sp = Table::Make(schema_, columns_);
+  const Table& table = *table_sp;
+
+  std::shared_ptr<Table> result;
+  ASSERT_OK(table.SetColumn(0, table.column(1), &result));
+
+  auto ex_schema =
+      ::arrow::schema({schema_->field(1), schema_->field(1), schema_->field(2)});
+  std::vector<std::shared_ptr<Column>> ex_columns = {table.column(1), table.column(1),
+                                                     table.column(2)};
+
+  auto expected = Table::Make(ex_schema, ex_columns);
   ASSERT_TRUE(result->Equals(*expected));
 }
 

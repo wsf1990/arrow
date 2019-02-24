@@ -1,14 +1,13 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- * <p>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -23,7 +22,7 @@ package org.apache.arrow.memory;
  * Child allocator class. Only slightly different from the {@see RootAllocator},
  * in that these can't be created directly, but must be obtained from
  * {@see BufferAllocator#newChildAllocator(AllocatorOwner, long, long, int)}.
- * <p>
+ *
  * <p>Child allocators can only be created by the root, or other children, so
  * this class is package private.</p>
  */
@@ -32,6 +31,7 @@ class ChildAllocator extends BaseAllocator {
   /**
    * Constructor.
    *
+   * @param listener        Allocation listener to be used in this child
    * @param parentAllocator parent allocator -- the one creating this child
    * @param name            the name of this child allocator
    * @param initReservation initial amount of space to reserve (obtained from the parent)
@@ -41,11 +41,12 @@ class ChildAllocator extends BaseAllocator {
    *                        allocation policy in force, even less memory may be available
    */
   ChildAllocator(
+      AllocationListener listener,
       BaseAllocator parentAllocator,
       String name,
       long initReservation,
       long maxAllocation) {
-    super(parentAllocator, name, initReservation, maxAllocation);
+    super(parentAllocator, listener, name, initReservation, maxAllocation);
   }
 
 

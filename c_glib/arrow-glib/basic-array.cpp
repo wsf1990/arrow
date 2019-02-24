@@ -22,13 +22,13 @@
 #endif
 
 #include <arrow-glib/array.hpp>
+#include <arrow-glib/basic-data-type.hpp>
 #include <arrow-glib/buffer.hpp>
 #include <arrow-glib/compute.hpp>
-#include <arrow-glib/basic-data-type.hpp>
+#include <arrow-glib/decimal128.hpp>
 #include <arrow-glib/error.hpp>
 #include <arrow-glib/type.hpp>
 
-#include <iostream>
 #include <sstream>
 
 template <typename T>
@@ -194,6 +194,10 @@ G_BEGIN_DECLS
  * nanoseconds since midnight in 64-bit signed integer array. It can
  * store zero or more time data. If you don't have Arrow format data,
  * you need to use #GArrowTime64ArrayBuilder to create a new array.
+ *
+ * #GArrowDecimal128Array is a class for 128-bit decimal array. It can store zero
+ * or more 128-bit decimal data. If you don't have Arrow format data, you need
+ * to use #GArrowDecimal128ArrayBuilder to create a new array.
  */
 
 typedef struct GArrowArrayPrivate_ {
@@ -205,10 +209,14 @@ enum {
   PROP_ARRAY
 };
 
-G_DEFINE_TYPE_WITH_PRIVATE(GArrowArray, garrow_array, G_TYPE_OBJECT)
+G_DEFINE_ABSTRACT_TYPE_WITH_PRIVATE(GArrowArray,
+                                    garrow_array,
+                                    G_TYPE_OBJECT)
 
-#define GARROW_ARRAY_GET_PRIVATE(obj)                                   \
-  (G_TYPE_INSTANCE_GET_PRIVATE((obj), GARROW_TYPE_ARRAY, GArrowArrayPrivate))
+#define GARROW_ARRAY_GET_PRIVATE(obj)         \
+  static_cast<GArrowArrayPrivate *>(          \
+     garrow_array_get_instance_private(       \
+       GARROW_ARRAY(obj)))
 
 static void
 garrow_array_finalize(GObject *object)
@@ -418,7 +426,7 @@ garrow_array_get_n_nulls(GArrowArray *array)
  * @array: A #GArrowArray.
  *
  * Returns: (transfer full) (nullable): The bitmap that indicates null
- *   value indexes for the array as #GArrowBuffer or %NULL when
+ *   value indices for the array as #GArrowBuffer or %NULL when
  *   garrow_array_get_n_nulls() returns 0.
  *
  * Since: 0.3.0
@@ -488,7 +496,8 @@ garrow_array_slice(GArrowArray *array,
  * @array: A #GArrowArray.
  * @error: (nullable): Return location for a #GError or %NULL.
  *
- * Returns: (nullable): The formatted array content or %NULL on error.
+ * Returns: (nullable) (transfer full):
+ *   The formatted array content or %NULL on error.
  *
  *   The returned string should be freed when with g_free() when no
  *   longer needed.
@@ -602,7 +611,7 @@ garrow_array_unique(GArrowArray *array,
  * @error: (nullable): Return location for a #GError or %NULL.
  *
  * Returns: (nullable) (transfer full):
- *   A newly created #GArrowDictionarArray for the @array on success,
+ *   A newly created #GArrowDictionaryArray for the @array on success,
  *   %NULL on error.
  *
  * Since: 0.8.0
@@ -635,8 +644,8 @@ garrow_array_dictionary_encode(GArrowArray *array,
 }
 
 
-G_DEFINE_TYPE(GArrowNullArray,               \
-              garrow_null_array,             \
+G_DEFINE_TYPE(GArrowNullArray,
+              garrow_null_array,
               GARROW_TYPE_ARRAY)
 
 static void
@@ -665,8 +674,8 @@ garrow_null_array_new(gint64 length)
 }
 
 
-G_DEFINE_TYPE(GArrowPrimitiveArray,             \
-              garrow_primitive_array,           \
+G_DEFINE_TYPE(GArrowPrimitiveArray,
+              garrow_primitive_array,
               GARROW_TYPE_ARRAY)
 
 static void
@@ -696,8 +705,8 @@ garrow_primitive_array_get_buffer(GArrowPrimitiveArray *array)
 }
 
 
-G_DEFINE_TYPE(GArrowBooleanArray,               \
-              garrow_boolean_array,             \
+G_DEFINE_TYPE(GArrowBooleanArray,
+              garrow_boolean_array,
               GARROW_TYPE_PRIMITIVE_ARRAY)
 
 static void
@@ -758,7 +767,8 @@ garrow_boolean_array_get_value(GArrowBooleanArray *array,
  * @array: A #GArrowBooleanArray.
  * @length: (out): The number of values.
  *
- * Returns: (array length=length): The raw boolean values.
+ * Returns: (array length=length) (transfer full):
+ *   The raw boolean values.
  *
  *   It should be freed with g_free() when no longer needed.
  */
@@ -778,8 +788,8 @@ garrow_boolean_array_get_values(GArrowBooleanArray *array,
 }
 
 
-G_DEFINE_TYPE(GArrowNumericArray,               \
-              garrow_numeric_array,             \
+G_DEFINE_TYPE(GArrowNumericArray,
+              garrow_numeric_array,
               GARROW_TYPE_PRIMITIVE_ARRAY)
 
 static void
@@ -793,8 +803,8 @@ garrow_numeric_array_class_init(GArrowNumericArrayClass *klass)
 }
 
 
-G_DEFINE_TYPE(GArrowInt8Array,               \
-              garrow_int8_array,             \
+G_DEFINE_TYPE(GArrowInt8Array,
+              garrow_int8_array,
               GARROW_TYPE_NUMERIC_ARRAY)
 
 static void
@@ -866,8 +876,8 @@ garrow_int8_array_get_values(GArrowInt8Array *array,
 }
 
 
-G_DEFINE_TYPE(GArrowUInt8Array,               \
-              garrow_uint8_array,             \
+G_DEFINE_TYPE(GArrowUInt8Array,
+              garrow_uint8_array,
               GARROW_TYPE_NUMERIC_ARRAY)
 
 static void
@@ -939,8 +949,8 @@ garrow_uint8_array_get_values(GArrowUInt8Array *array,
 }
 
 
-G_DEFINE_TYPE(GArrowInt16Array,               \
-              garrow_int16_array,             \
+G_DEFINE_TYPE(GArrowInt16Array,
+              garrow_int16_array,
               GARROW_TYPE_NUMERIC_ARRAY)
 
 static void
@@ -1012,8 +1022,8 @@ garrow_int16_array_get_values(GArrowInt16Array *array,
 }
 
 
-G_DEFINE_TYPE(GArrowUInt16Array,               \
-              garrow_uint16_array,             \
+G_DEFINE_TYPE(GArrowUInt16Array,
+              garrow_uint16_array,
               GARROW_TYPE_NUMERIC_ARRAY)
 
 static void
@@ -1085,8 +1095,8 @@ garrow_uint16_array_get_values(GArrowUInt16Array *array,
 }
 
 
-G_DEFINE_TYPE(GArrowInt32Array,               \
-              garrow_int32_array,             \
+G_DEFINE_TYPE(GArrowInt32Array,
+              garrow_int32_array,
               GARROW_TYPE_NUMERIC_ARRAY)
 
 static void
@@ -1158,8 +1168,8 @@ garrow_int32_array_get_values(GArrowInt32Array *array,
 }
 
 
-G_DEFINE_TYPE(GArrowUInt32Array,               \
-              garrow_uint32_array,             \
+G_DEFINE_TYPE(GArrowUInt32Array,
+              garrow_uint32_array,
               GARROW_TYPE_NUMERIC_ARRAY)
 
 static void
@@ -1231,8 +1241,8 @@ garrow_uint32_array_get_values(GArrowUInt32Array *array,
 }
 
 
-G_DEFINE_TYPE(GArrowInt64Array,               \
-              garrow_int64_array,             \
+G_DEFINE_TYPE(GArrowInt64Array,
+              garrow_int64_array,
               GARROW_TYPE_NUMERIC_ARRAY)
 
 static void
@@ -1306,8 +1316,8 @@ garrow_int64_array_get_values(GArrowInt64Array *array,
 }
 
 
-G_DEFINE_TYPE(GArrowUInt64Array,               \
-              garrow_uint64_array,             \
+G_DEFINE_TYPE(GArrowUInt64Array,
+              garrow_uint64_array,
               GARROW_TYPE_NUMERIC_ARRAY)
 
 static void
@@ -1381,8 +1391,8 @@ garrow_uint64_array_get_values(GArrowUInt64Array *array,
 }
 
 
-G_DEFINE_TYPE(GArrowFloatArray,               \
-              garrow_float_array,             \
+G_DEFINE_TYPE(GArrowFloatArray,
+              garrow_float_array,
               GARROW_TYPE_NUMERIC_ARRAY)
 
 static void
@@ -1454,8 +1464,8 @@ garrow_float_array_get_values(GArrowFloatArray *array,
 }
 
 
-G_DEFINE_TYPE(GArrowDoubleArray,               \
-              garrow_double_array,             \
+G_DEFINE_TYPE(GArrowDoubleArray,
+              garrow_double_array,
               GARROW_TYPE_NUMERIC_ARRAY)
 
 static void
@@ -1527,8 +1537,8 @@ garrow_double_array_get_values(GArrowDoubleArray *array,
 }
 
 
-G_DEFINE_TYPE(GArrowBinaryArray,               \
-              garrow_binary_array,             \
+G_DEFINE_TYPE(GArrowBinaryArray,
+              garrow_binary_array,
               GARROW_TYPE_ARRAY)
 
 static void
@@ -1631,8 +1641,8 @@ garrow_binary_array_get_offsets_buffer(GArrowBinaryArray *array)
 }
 
 
-G_DEFINE_TYPE(GArrowStringArray,               \
-              garrow_string_array,             \
+G_DEFINE_TYPE(GArrowStringArray,
+              garrow_string_array,
               GARROW_TYPE_BINARY_ARRAY)
 
 static void
@@ -1703,8 +1713,8 @@ garrow_string_array_get_string(GArrowStringArray *array,
 }
 
 
-G_DEFINE_TYPE(GArrowDate32Array,               \
-              garrow_date32_array,             \
+G_DEFINE_TYPE(GArrowDate32Array,
+              garrow_date32_array,
               GARROW_TYPE_NUMERIC_ARRAY)
 
 static void
@@ -1780,8 +1790,8 @@ garrow_date32_array_get_values(GArrowDate32Array *array,
 }
 
 
-G_DEFINE_TYPE(GArrowDate64Array,               \
-              garrow_date64_array,             \
+G_DEFINE_TYPE(GArrowDate64Array,
+              garrow_date64_array,
               GARROW_TYPE_NUMERIC_ARRAY)
 
 static void
@@ -1859,8 +1869,8 @@ garrow_date64_array_get_values(GArrowDate64Array *array,
 }
 
 
-G_DEFINE_TYPE(GArrowTimestampArray,             \
-              garrow_timestamp_array,           \
+G_DEFINE_TYPE(GArrowTimestampArray,
+              garrow_timestamp_array,
               GARROW_TYPE_NUMERIC_ARRAY)
 
 static void
@@ -1942,8 +1952,8 @@ garrow_timestamp_array_get_values(GArrowTimestampArray *array,
 }
 
 
-G_DEFINE_TYPE(GArrowTime32Array,               \
-              garrow_time32_array,             \
+G_DEFINE_TYPE(GArrowTime32Array,
+              garrow_time32_array,
               GARROW_TYPE_NUMERIC_ARRAY)
 
 static void
@@ -2023,8 +2033,8 @@ garrow_time32_array_get_values(GArrowTime32Array *array,
 }
 
 
-G_DEFINE_TYPE(GArrowTime64Array,               \
-              garrow_time64_array,             \
+G_DEFINE_TYPE(GArrowTime64Array,
+              garrow_time64_array,
               GARROW_TYPE_NUMERIC_ARRAY)
 
 static void
@@ -2105,6 +2115,78 @@ garrow_time64_array_get_values(GArrowTime64Array *array,
   return reinterpret_cast<const gint64 *>(values);
 }
 
+
+G_DEFINE_TYPE(GArrowFixedSizeBinaryArray,
+              garrow_fixed_size_binary_array,
+              GARROW_TYPE_PRIMITIVE_ARRAY)
+static void
+garrow_fixed_size_binary_array_init(GArrowFixedSizeBinaryArray *object)
+{
+}
+
+static void
+garrow_fixed_size_binary_array_class_init(GArrowFixedSizeBinaryArrayClass *klass)
+{
+}
+
+
+G_DEFINE_TYPE(GArrowDecimal128Array,
+              garrow_decimal128_array,
+              GARROW_TYPE_FIXED_SIZE_BINARY_ARRAY)
+static void
+garrow_decimal128_array_init(GArrowDecimal128Array *object)
+{
+}
+
+static void
+garrow_decimal128_array_class_init(GArrowDecimal128ArrayClass *klass)
+{
+}
+
+/**
+ * garrow_decimal128_array_format_value:
+ * @array: A #GArrowDecimal128Array.
+ * @i: The index of the target value.
+ *
+ * Returns: (transfer full): The formatted i-th value.
+ *
+ *   The returned string should be freed with g_free() when no longer
+ *   needed.
+ *
+ * Since: 0.10.0
+ */
+gchar *
+garrow_decimal128_array_format_value(GArrowDecimal128Array *array,
+                                     gint64 i)
+{
+  auto arrow_array = garrow_array_get_raw(GARROW_ARRAY(array));
+  auto arrow_decimal128_array =
+    std::static_pointer_cast<arrow::Decimal128Array>(arrow_array);
+  auto value = arrow_decimal128_array->FormatValue(i);
+  return g_strndup(value.data(), value.size());
+}
+
+/**
+ * garrow_decimal128_array_get_value:
+ * @array: A #GArrowDecimal128Array.
+ * @i: The index of the target value.
+ *
+ * Returns: (transfer full): The i-th value.
+ *
+ * Since: 0.10.0
+ */
+GArrowDecimal128 *
+garrow_decimal128_array_get_value(GArrowDecimal128Array *array,
+                                  gint64 i)
+{
+  auto arrow_array = garrow_array_get_raw(GARROW_ARRAY(array));
+  auto arrow_decimal128_array =
+    std::static_pointer_cast<arrow::Decimal128Array>(arrow_array);
+  auto arrow_decimal =
+    std::make_shared<arrow::Decimal128>(arrow_decimal128_array->GetValue(i));
+  return garrow_decimal128_new_raw(&arrow_decimal);
+}
+
 G_END_DECLS
 
 GArrowArray *
@@ -2177,8 +2259,22 @@ garrow_array_new_raw(std::shared_ptr<arrow::Array> *arrow_array)
   case arrow::Type::type::STRUCT:
     type = GARROW_TYPE_STRUCT_ARRAY;
     break;
+  case arrow::Type::type::UNION:
+    {
+      auto arrow_union_array =
+        std::static_pointer_cast<arrow::UnionArray>(*arrow_array);
+      if (arrow_union_array->mode() == arrow::UnionMode::SPARSE) {
+        type = GARROW_TYPE_SPARSE_UNION_ARRAY;
+      } else {
+        type = GARROW_TYPE_DENSE_UNION_ARRAY;
+      }
+    }
+    break;
   case arrow::Type::type::DICTIONARY:
     type = GARROW_TYPE_DICTIONARY_ARRAY;
+    break;
+  case arrow::Type::type::DECIMAL:
+    type = GARROW_TYPE_DECIMAL128_ARRAY;
     break;
   default:
     type = GARROW_TYPE_ARRAY;

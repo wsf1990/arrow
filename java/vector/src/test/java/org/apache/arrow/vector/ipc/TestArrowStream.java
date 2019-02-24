@@ -1,13 +1,12 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -25,15 +24,14 @@ import static org.junit.Assert.assertTrue;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.channels.Channels;
+import java.util.Collections;
 
-import io.netty.buffer.ArrowBuf;
-import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.TinyIntVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.ipc.ArrowStreamReader;
-import org.apache.arrow.vector.ipc.ArrowStreamWriter;
-import org.apache.arrow.vector.ipc.BaseFileTest;
-import org.apache.arrow.vector.ipc.MessageSerializerTest;
+import org.apache.arrow.vector.dictionary.DictionaryProvider;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.junit.Assert;
 import org.junit.Test;
@@ -46,8 +44,9 @@ public class TestArrowStream extends BaseFileTest {
 
     // Write the stream.
     ByteArrayOutputStream out = new ByteArrayOutputStream();
-    try (ArrowStreamWriter writer = new ArrowStreamWriter(root, null, out)) {
-    }
+    ArrowStreamWriter writer = new ArrowStreamWriter(root, null, out);
+    writer.close();
+    Assert.assertTrue(out.size() > 0);
 
     ByteArrayInputStream in = new ByteArrayInputStream(out.toByteArray());
     try (ArrowStreamReader reader = new ArrowStreamReader(in, allocator)) {
@@ -57,6 +56,33 @@ public class TestArrowStream extends BaseFileTest {
       assertEquals(0, reader.getVectorSchemaRoot().getRowCount());
       Assert.assertFalse(reader.loadNextBatch());
       assertEquals(0, reader.getVectorSchemaRoot().getRowCount());
+    }
+  }
+
+  @Test
+  public void testStreamZeroLengthBatch() throws IOException {
+    ByteArrayOutputStream os = new ByteArrayOutputStream();
+
+    try (IntVector vector = new IntVector("foo", allocator);) {
+      Schema schema = new Schema(Collections.singletonList(vector.getField()), null);
+      try (VectorSchemaRoot root =
+             new VectorSchemaRoot(schema, Collections.singletonList(vector), vector.getValueCount());
+           ArrowStreamWriter writer = new ArrowStreamWriter(root, null, Channels.newChannel(os));) {
+        vector.setValueCount(0);
+        root.setRowCount(0);
+        writer.writeBatch();
+        writer.end();
+      }
+    }
+
+    ByteArrayInputStream in = new ByteArrayInputStream(os.toByteArray());
+
+    try (ArrowStreamReader reader = new ArrowStreamReader(in, allocator);) {
+      VectorSchemaRoot root = reader.getVectorSchemaRoot();
+      IntVector vector = (IntVector) root.getFieldVectors().get(0);
+      reader.loadNextBatch();
+      assertEquals(vector.getValueCount(), 0);
+      assertEquals(root.getRowCount(), 0);
     }
   }
 
@@ -97,6 +123,27 @@ public class TestArrowStream extends BaseFileTest {
         assertFalse(reader.loadNextBatch());
         assertEquals(0, reader.getVectorSchemaRoot().getRowCount());
       }
+    }
+  }
+
+  @Test
+  public void testReadWriteMultipleBatches() throws IOException {
+    ByteArrayOutputStream os = new ByteArrayOutputStream();
+
+    try (IntVector vector = new IntVector("foo", allocator);) {
+      Schema schema = new Schema(Collections.singletonList(vector.getField()), null);
+      try (VectorSchemaRoot root =
+             new VectorSchemaRoot(schema, Collections.singletonList(vector), vector.getValueCount());
+           ArrowStreamWriter writer = new ArrowStreamWriter(root, null, Channels.newChannel(os));) {
+        writeBatchData(writer, vector, root);
+      }
+    }
+
+    ByteArrayInputStream in = new ByteArrayInputStream(os.toByteArray());
+
+    try (ArrowStreamReader reader = new ArrowStreamReader(in, allocator);) {
+      IntVector vector = (IntVector) reader.getVectorSchemaRoot().getFieldVectors().get(0);
+      validateBatchData(reader, vector);
     }
   }
 }

@@ -25,6 +25,9 @@
 #include <arrow-glib/chunked-array.hpp>
 #include <arrow-glib/data-type.hpp>
 #include <arrow-glib/type.hpp>
+#include <arrow-glib/error.hpp>
+
+#include <sstream>
 
 G_BEGIN_DECLS
 
@@ -49,10 +52,10 @@ G_DEFINE_TYPE_WITH_PRIVATE(GArrowChunkedArray,
                            garrow_chunked_array,
                            G_TYPE_OBJECT)
 
-#define GARROW_CHUNKED_ARRAY_GET_PRIVATE(obj)                   \
-  (G_TYPE_INSTANCE_GET_PRIVATE((obj),                           \
-                               GARROW_TYPE_CHUNKED_ARRAY,       \
-                               GArrowChunkedArrayPrivate))
+#define GARROW_CHUNKED_ARRAY_GET_PRIVATE(obj)         \
+  static_cast<GArrowChunkedArrayPrivate *>(           \
+     garrow_chunked_array_get_instance_private(       \
+       GARROW_CHUNKED_ARRAY(obj)))
 
 static void
 garrow_chunked_array_finalize(GObject *object)
@@ -292,6 +295,32 @@ garrow_chunked_array_slice(GArrowChunkedArray *chunked_array,
   const auto arrow_chunked_array = garrow_chunked_array_get_raw(chunked_array);
   auto arrow_sub_chunked_array = arrow_chunked_array->Slice(offset, length);
   return garrow_chunked_array_new_raw(&arrow_sub_chunked_array);
+}
+
+/**
+ * garrow_chunked_array_to_string:
+ * @chunked_array: A #GArrowChunkedArray.
+ * @error: (nullable): Return location for a #GError or %NULL.
+ *
+ * Returns: (nullable) (transfer full):
+ *   The formatted chunked array content or %NULL on error.
+ *
+ *   The returned string should be freed when with g_free() when no
+ *   longer needed.
+ *
+ * Since: 0.11.0
+ */
+gchar *
+garrow_chunked_array_to_string(GArrowChunkedArray *chunked_array, GError **error)
+{
+  const auto arrow_chunked_array = garrow_chunked_array_get_raw(chunked_array);
+  std::stringstream sink;
+  auto status = arrow::PrettyPrint(*arrow_chunked_array, 0, &sink);
+  if (garrow_error_check(error, status, "[chunked-array][to-string]")) {
+    return g_strdup(sink.str().c_str());
+  } else {
+    return NULL;
+  }
 }
 
 G_END_DECLS

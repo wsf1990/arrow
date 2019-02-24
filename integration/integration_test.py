@@ -18,6 +18,7 @@
 from collections import OrderedDict
 import argparse
 import binascii
+import contextlib
 import glob
 import itertools
 import json
@@ -26,7 +27,9 @@ import random
 import six
 import string
 import subprocess
+import sys
 import tempfile
+import traceback
 import uuid
 import errno
 
@@ -478,7 +481,8 @@ class FixedSizeBinaryType(PrimitiveType):
         return FixedSizeBinaryColumn
 
     def _get_type(self):
-        return OrderedDict([('name', 'fixedsizebinary'), ('byteWidth', self.byte_width)])
+        return OrderedDict([('name', 'fixedsizebinary'),
+                            ('byteWidth', self.byte_width)])
 
     def _get_type_layout(self):
         return OrderedDict([
@@ -777,7 +781,9 @@ def get_field(name, type_, nullable=True):
         return StringType(name, nullable=nullable)
     elif type_.startswith('fixedsizebinary_'):
         byte_width = int(type_.split('_')[1])
-        return FixedSizeBinaryType(name, byte_width=byte_width, nullable=nullable)
+        return FixedSizeBinaryType(name,
+                                   byte_width=byte_width,
+                                   nullable=nullable)
 
     dtype = np.dtype(type_)
 
@@ -890,8 +896,8 @@ def generate_dictionary_case():
                           dictionaries=[dict1, dict2])
 
 
-def get_generated_json_files():
-    temp_dir = tempfile.mkdtemp()
+def get_generated_json_files(tempdir=None):
+    tempdir = tempdir or tempfile.mkdtemp()
 
     def _temp_path():
         return
@@ -907,7 +913,7 @@ def get_generated_json_files():
 
     generated_paths = []
     for file_obj in file_objs:
-        out_path = os.path.join(temp_dir, 'generated_' +
+        out_path = os.path.join(tempdir, 'generated_' +
                                 file_obj.name + '.json')
         file_obj.write(out_path)
         generated_paths.append(out_path)
@@ -921,16 +927,36 @@ def get_generated_json_files():
 
 class IntegrationRunner(object):
 
-    def __init__(self, json_files, testers, debug=False):
+    def __init__(self, json_files, testers, tempdir=None, debug=False):
         self.json_files = json_files
         self.testers = testers
-        self.temp_dir = tempfile.mkdtemp()
+        self.temp_dir = tempdir or tempfile.mkdtemp()
         self.debug = debug
 
     def run(self):
-        for producer, consumer in itertools.product(filter(lambda t: t.PRODUCER, self.testers),
-                                                    filter(lambda t: t.CONSUMER, self.testers)):
-            self._compare_implementations(producer, consumer)
+        failures = []
+        for producer, consumer in itertools.product(
+                filter(lambda t: t.PRODUCER, self.testers),
+                filter(lambda t: t.CONSUMER, self.testers)):
+            try:
+                self._compare_implementations(producer, consumer)
+            except Exception:
+                traceback.print_exc()
+                failures.append((producer, consumer, sys.exc_info()))
+        return failures
+
+    def run_flight(self):
+        failures = []
+        servers = filter(lambda t: t.FLIGHT_SERVER, self.testers)
+        clients = filter(lambda t: (t.FLIGHT_CLIENT and t.CONSUMER),
+                         self.testers)
+        for server, client in itertools.product(servers, clients):
+            try:
+                self._compare_flight_implementations(server, client)
+            except Exception:
+                traceback.print_exc()
+                failures.append((server, client, sys.exc_info()))
+        return failures
 
     def _compare_implementations(self, producer, consumer):
         print('##########################################################')
@@ -946,10 +972,12 @@ class IntegrationRunner(object):
 
             name = os.path.splitext(os.path.basename(json_path))[0]
 
+            file_id = guid()[:8]
+
             # Make the random access file
             print('-- Creating binary inputs')
-            producer_file_path = os.path.join(self.temp_dir, guid() + '_' +
-                                              name + '.json_to_arrow')
+            producer_file_path = os.path.join(self.temp_dir, file_id + '_' +
+                                              name + '.json_as_file')
             producer.json_to_file(json_path, producer_file_path)
 
             # Validate the file
@@ -957,20 +985,42 @@ class IntegrationRunner(object):
             consumer.validate(json_path, producer_file_path)
 
             print('-- Validating stream')
-            producer_stream_path = os.path.join(self.temp_dir, guid() + '_' +
-                                                name + '.arrow_to_stream')
-            consumer_file_path = os.path.join(self.temp_dir, guid() + '_' +
-                                              name + '.stream_to_arrow')
+            producer_stream_path = os.path.join(self.temp_dir, file_id + '_' +
+                                                name +
+                                                '.producer_file_as_stream')
+            consumer_file_path = os.path.join(self.temp_dir, file_id + '_' +
+                                              name +
+                                              '.consumer_stream_as_file')
             producer.file_to_stream(producer_file_path,
                                     producer_stream_path)
             consumer.stream_to_file(producer_stream_path,
                                     consumer_file_path)
             consumer.validate(json_path, consumer_file_path)
 
+    def _compare_flight_implementations(self, producer, consumer):
+        print('##########################################################')
+        print(
+            '{0} serving, {1} requesting'.format(producer.name, consumer.name)
+        )
+        print('##########################################################')
+
+        with producer.flight_server():
+            for json_path in self.json_files:
+                print('=' * 58)
+                print('Testing file {0}'.format(json_path))
+                print('=' * 58)
+
+                # Have the client upload the file, then download and
+                # compare
+                consumer.flight_request(producer.FLIGHT_PORT, json_path)
+
 
 class Tester(object):
     PRODUCER = False
     CONSUMER = False
+    FLIGHT_SERVER = False
+    FLIGHT_CLIENT = False
+    FLIGHT_PORT = 31337
 
     def __init__(self, debug=False):
         self.debug = debug
@@ -987,10 +1037,20 @@ class Tester(object):
     def validate(self, json_path, arrow_path):
         raise NotImplementedError
 
+    def flight_server(self):
+        raise NotImplementedError
+
+    def flight_request(self, port, json_path):
+        raise NotImplementedError
+
 
 class JavaTester(Tester):
     PRODUCER = True
     CONSUMER = True
+    FLIGHT_SERVER = True
+    FLIGHT_CLIENT = True
+
+    FLIGHT_PORT = 31338
 
     _arrow_version = load_version_from_pom()
     ARROW_TOOLS_JAR = os.environ.get(
@@ -998,6 +1058,15 @@ class JavaTester(Tester):
         os.path.join(ARROW_HOME,
                      'java/tools/target/arrow-tools-{}-'
                      'jar-with-dependencies.jar'.format(_arrow_version)))
+    ARROW_FLIGHT_JAR = os.environ.get(
+        'ARROW_FLIGHT_JAVA_INTEGRATION_JAR',
+        os.path.join(ARROW_HOME,
+                     'java/flight/target/arrow-flight-{}-'
+                     'jar-with-dependencies.jar'.format(_arrow_version)))
+    ARROW_FLIGHT_SERVER = ('org.apache.arrow.flight.example.integration.'
+                           'IntegrationTestServer')
+    ARROW_FLIGHT_CLIENT = ('org.apache.arrow.flight.example.integration.'
+                           'IntegrationTestClient')
 
     name = 'Java'
 
@@ -1040,18 +1109,57 @@ class JavaTester(Tester):
             print(' '.join(cmd))
         run_cmd(cmd)
 
+    def flight_request(self, port, json_path):
+        cmd = ['java', '-cp', self.ARROW_FLIGHT_JAR,
+               self.ARROW_FLIGHT_CLIENT,
+               '-port', str(port),
+               '-j', json_path]
+        if self.debug:
+            print(' '.join(cmd))
+        run_cmd(cmd)
+
+    @contextlib.contextmanager
+    def flight_server(self):
+        cmd = ['java', '-cp', self.ARROW_FLIGHT_JAR,
+               self.ARROW_FLIGHT_SERVER,
+               '-port', str(self.FLIGHT_PORT)]
+        if self.debug:
+            print(' '.join(cmd))
+        server = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+        try:
+            output = server.stdout.readline().decode()
+            if not output.startswith("Server listening on localhost"):
+                raise RuntimeError(
+                    "Flight-Java server did not start properly, output: " +
+                    output)
+            yield
+        finally:
+            server.terminate()
+            server.wait(5)
+
 
 class CPPTester(Tester):
     PRODUCER = True
     CONSUMER = True
+    FLIGHT_SERVER = True
+    FLIGHT_CLIENT = True
 
     EXE_PATH = os.environ.get(
         'ARROW_CPP_EXE_PATH',
         os.path.join(ARROW_HOME, 'cpp/build/debug'))
 
-    CPP_INTEGRATION_EXE = os.path.join(EXE_PATH, 'json-integration-test')
-    STREAM_TO_FILE = os.path.join(EXE_PATH, 'stream-to-file')
-    FILE_TO_STREAM = os.path.join(EXE_PATH, 'file-to-stream')
+    CPP_INTEGRATION_EXE = os.path.join(EXE_PATH, 'arrow-json-integration-test')
+    STREAM_TO_FILE = os.path.join(EXE_PATH, 'arrow-stream-to-file')
+    FILE_TO_STREAM = os.path.join(EXE_PATH, 'arrow-file-to-stream')
+
+    FLIGHT_PORT = 31337
+
+    FLIGHT_SERVER_CMD = [
+        os.path.join(EXE_PATH, 'flight-test-integration-server'),
+        "-port", str(FLIGHT_PORT)]
+    FLIGHT_CLIENT_CMD = [
+        os.path.join(EXE_PATH, 'flight-test-integration-client'),
+        "-host", "localhost"]
 
     name = 'C++'
 
@@ -1091,16 +1199,48 @@ class CPPTester(Tester):
             print(cmd)
         os.system(cmd)
 
+    @contextlib.contextmanager
+    def flight_server(self):
+        if self.debug:
+            print(' '.join(self.FLIGHT_SERVER_CMD))
+        server = subprocess.Popen(self.FLIGHT_SERVER_CMD,
+                                  stdout=subprocess.PIPE)
+        try:
+            output = server.stdout.readline().decode()
+            if not output.startswith("Server listening on localhost"):
+                raise RuntimeError(
+                    "Flight-C++ server did not start properly, output: " +
+                    output)
+            yield
+        finally:
+            server.terminate()
+            server.wait(5)
+
+    def flight_request(self, port, json_path):
+        cmd = self.FLIGHT_CLIENT_CMD + [
+            '-port=' + str(port),
+            '-path=' + json_path,
+        ]
+        if self.debug:
+            print(' '.join(cmd))
+        run_cmd(cmd)
+
+
 class JSTester(Tester):
-    PRODUCER = False
+    PRODUCER = True
     CONSUMER = True
 
-    INTEGRATION_EXE = os.path.join(ARROW_HOME, 'js/bin/integration.js')
+    EXE_PATH = os.path.join(ARROW_HOME, 'js/bin')
+    VALIDATE = os.path.join(EXE_PATH, 'integration.js')
+    JSON_TO_ARROW = os.path.join(EXE_PATH, 'json-to-arrow.js')
+    STREAM_TO_FILE = os.path.join(EXE_PATH, 'stream-to-file.js')
+    FILE_TO_STREAM = os.path.join(EXE_PATH, 'file-to-stream.js')
 
     name = 'JS'
 
-    def _run(self, arrow_path=None, json_path=None, command='VALIDATE'):
-        cmd = [self.INTEGRATION_EXE]
+    def _run(self, exe_cmd, arrow_path=None, json_path=None,
+             command='VALIDATE'):
+        cmd = [exe_cmd]
 
         if arrow_path is not None:
             cmd.extend(['-a', arrow_path])
@@ -1116,11 +1256,31 @@ class JSTester(Tester):
         run_cmd(cmd)
 
     def validate(self, json_path, arrow_path):
-        return self._run(arrow_path, json_path, 'VALIDATE')
+        return self._run(self.VALIDATE, arrow_path, json_path, 'VALIDATE')
+
+    def json_to_file(self, json_path, arrow_path):
+        cmd = ['node',
+               '--no-warnings', self.JSON_TO_ARROW,
+               '-a', arrow_path,
+               '-j', json_path]
+        cmd = ' '.join(cmd)
+        if self.debug:
+            print(cmd)
+        os.system(cmd)
 
     def stream_to_file(self, stream_path, file_path):
-        # Just copy stream to file, we can read the stream directly
-        cmd = ['cp', stream_path, file_path]
+        cmd = ['cat', stream_path, '|',
+               'node', '--no-warnings', self.STREAM_TO_FILE, '>',
+               file_path]
+        cmd = ' '.join(cmd)
+        if self.debug:
+            print(cmd)
+        os.system(cmd)
+
+    def file_to_stream(self, file_path, stream_path):
+        cmd = ['cat', file_path, '|',
+               'node', '--no-warnings', self.FILE_TO_STREAM, '>',
+               stream_path]
         cmd = ' '.join(cmd)
         if self.debug:
             print(cmd)
@@ -1132,15 +1292,32 @@ def get_static_json_files():
     return glob.glob(glob_pattern)
 
 
-def run_all_tests(debug=False):
-    testers = [CPPTester(debug=debug), JavaTester(debug=debug), JSTester(debug=debug)]
+def run_all_tests(run_flight=False, debug=False, tempdir=None):
+    testers = [CPPTester(debug=debug),
+               JavaTester(debug=debug),
+               JSTester(debug=debug)]
     static_json_files = get_static_json_files()
-    generated_json_files = get_generated_json_files()
+    generated_json_files = get_generated_json_files(tempdir=tempdir)
     json_files = static_json_files + generated_json_files
 
-    runner = IntegrationRunner(json_files, testers, debug=debug)
-    runner.run()
-    print('-- All tests passed!')
+    runner = IntegrationRunner(json_files, testers,
+                               tempdir=tempdir, debug=debug)
+    failures = []
+    failures.extend(runner.run())
+    if run_flight:
+        failures.extend(runner.run_flight())
+
+    print()
+    print('##########################################################')
+    if not failures:
+        print('-- All tests passed!')
+    else:
+        print('-- Tests completed, failures:')
+    for producer, consumer, exc_info in failures:
+        print("FAILED TEST:", producer.name, "producing, ",
+              consumer.name, "consuming")
+        traceback.print_exception(*exc_info)
+        print()
 
 
 def write_js_test_json(directory):
@@ -1160,9 +1337,16 @@ if __name__ == '__main__':
     parser.add_argument('--write_generated_json', dest='generated_json_path',
                         action='store', default=False,
                         help='Generate test JSON')
+    parser.add_argument('--run_flight', dest='run_flight',
+                        action='store_true', default=False,
+                        help='Run Flight integration tests')
     parser.add_argument('--debug', dest='debug', action='store_true',
                         default=False,
                         help='Run executables in debug mode as relevant')
+    parser.add_argument('--tempdir', dest='tempdir',
+                        default=tempfile.mkdtemp(),
+                        help=('Directory to use for writing '
+                              'integration test temporary files'))
     args = parser.parse_args()
     if args.generated_json_path:
         try:
@@ -1172,4 +1356,5 @@ if __name__ == '__main__':
                 raise
         write_js_test_json(args.generated_json_path)
     else:
-        run_all_tests(debug=args.debug)
+        run_all_tests(run_flight=args.run_flight,
+                      debug=args.debug, tempdir=args.tempdir)

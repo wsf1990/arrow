@@ -19,8 +19,7 @@
 #
 
 # Requirements
-# - Ruby 2.x
-#   - Plus gem dependencies, see c_glib/README
+# - Ruby >= 2.3
 # - Maven >= 3.3.9
 # - JDK >=7
 # - gcc >= 4.8
@@ -30,23 +29,42 @@
 # LD_LIBRARY_PATH
 
 case $# in
-  2) VERSION="$1"
-     RC_NUMBER="$2"
+  3) ARTIFACT="$1"
+     VERSION="$2"
+     RC_NUMBER="$3"
+     case $ARTIFACT in
+       source|binaries) ;;
+       *) echo "Invalid argument: '${ARTIFACT}', valid options are 'source' or 'binaries'"
+          exit 1
+          ;;
+     esac
      ;;
-
-  *) echo "Usage: $0 X.Y.Z RC_NUMBER"
+  *) echo "Usage: $0 source|binaries X.Y.Z RC_NUMBER"
      exit 1
      ;;
 esac
 
 set -ex
+set -o pipefail
 
 HERE=$(cd `dirname "${BASH_SOURCE[0]:-$0}"` && pwd)
 
 ARROW_DIST_URL='https://dist.apache.org/repos/dist/dev/arrow'
 
+: ${ARROW_HAVE_CUDA:=}
+if [ -z "$ARROW_HAVE_CUDA" ]; then
+  if nvidia-smi --list-gpus 2>&1 > /dev/null; then
+    ARROW_HAVE_CUDA=yes
+  fi
+fi
+
 download_dist_file() {
-  curl -f -O $ARROW_DIST_URL/$1
+  curl \
+    --silent \
+    --show-error \
+    --fail \
+    --location \
+    --remote-name $ARROW_DIST_URL/$1
 }
 
 download_rc_file() {
@@ -62,16 +80,73 @@ fetch_archive() {
   local dist_name=$1
   download_rc_file ${dist_name}.tar.gz
   download_rc_file ${dist_name}.tar.gz.asc
-  download_rc_file ${dist_name}.tar.gz.sha1
+  download_rc_file ${dist_name}.tar.gz.sha256
   download_rc_file ${dist_name}.tar.gz.sha512
   gpg --verify ${dist_name}.tar.gz.asc ${dist_name}.tar.gz
-  if [ "$(uname)" == "Darwin" ]; then
-    shasum -a 1 ${dist_name}.tar.gz | diff - ${dist_name}.tar.gz.sha1
-    shasum -a 512 ${dist_name}.tar.gz | diff - ${dist_name}.tar.gz.sha512
-  else
-    sha1sum ${dist_name}.tar.gz | diff - ${dist_name}.tar.gz.sha1
-    sha512sum ${dist_name}.tar.gz | diff - ${dist_name}.tar.gz.sha512
-  fi
+  shasum -a 256 -c ${dist_name}.tar.gz.sha256
+  shasum -a 512 -c ${dist_name}.tar.gz.sha512
+}
+
+bintray() {
+  local command=$1
+  shift
+  local path=$1
+  shift
+  local url=https://bintray.com/api/v1${path}
+  echo "${command} ${url}" 1>&2
+  curl \
+    --fail \
+    --request ${command} \
+    ${url} \
+    "$@" | \
+      jq .
+}
+
+download_bintray_files() {
+  local target=$1
+
+  local version_name=${VERSION}-rc${RC_NUMBER}
+
+  bintray \
+    GET /packages/${BINTRAY_REPOSITORY}/${target}-rc/versions/${version_name}/files | \
+      jq -r ".[].path" | \
+      while read file; do
+    mkdir -p "$(dirname ${file})"
+    curl \
+      --fail \
+      --location \
+      --output ${file} \
+      https://dl.bintray.com/${BINTRAY_REPOSITORY}/${file}
+  done
+}
+
+verify_binary_artifacts() {
+  local download_dir=binaries
+  mkdir -p ${download_dir}
+  pushd ${download_dir}
+
+  # takes longer on slow network
+  for target in centos debian python ubuntu; do
+    download_bintray_files ${target}
+  done
+
+  # verify the signature and the checksums of each artifact
+  find . -name '*.asc' | while read sigfile; do
+    artifact=${sigfile/.asc/}
+    gpg --verify $sigfile $artifact || exit 1
+
+    # go into the directory because the checksum files contain only the
+    # basename of the artifact
+    pushd $(dirname $artifact)
+    base_artifact=$(basename $artifact)
+    if [ -f $base_artifact.sha256 ]; then
+      shasum -a 256 -c $base_artifact.sha256 || exit 1
+    fi
+    shasum -a 512 -c $base_artifact.sha512 || exit 1
+    popd
+  done
+
+  popd
 }
 
 setup_tempdir() {
@@ -97,15 +172,16 @@ setup_miniconda() {
   bash miniconda.sh -b -p $MINICONDA
   rm -f miniconda.sh
 
-  export PATH=$MINICONDA/bin:$PATH
+  . $MINICONDA/etc/profile.d/conda.sh
 
-  conda create -n arrow-test -y -q python=3.6 \
+  conda create -n arrow-test -y -q -c conda-forge \
+        python=3.6 \
         nomkl \
         numpy \
         pandas \
         six \
-        cython -c conda-forge
-  source activate arrow-test
+        cython
+  conda activate arrow-test
 }
 
 # Build and test C++
@@ -114,40 +190,32 @@ test_and_install_cpp() {
   mkdir cpp/build
   pushd cpp/build
 
-  cmake -DCMAKE_INSTALL_PREFIX=$ARROW_HOME \
-        -DCMAKE_INSTALL_LIBDIR=$ARROW_HOME/lib \
-        -DARROW_PLASMA=on \
-        -DARROW_PYTHON=on \
-        -DARROW_BOOST_USE_SHARED=on \
-        -DCMAKE_BUILD_TYPE=release \
-        -DARROW_BUILD_BENCHMARKS=on \
-        ..
+  ARROW_CMAKE_OPTIONS="
+${ARROW_CMAKE_OPTIONS}
+-DCMAKE_INSTALL_PREFIX=$ARROW_HOME
+-DCMAKE_INSTALL_LIBDIR=lib
+-DARROW_PLASMA=ON
+-DARROW_ORC=ON
+-DARROW_PYTHON=ON
+-DARROW_GANDIVA=ON
+-DARROW_PARQUET=ON
+-DARROW_BOOST_USE_SHARED=ON
+-DCMAKE_BUILD_TYPE=release
+-DARROW_BUILD_TESTS=ON
+-DARROW_BUILD_BENCHMARKS=ON
+"
+  if [ "$ARROW_HAVE_CUDA" = "yes" ]; then
+    ARROW_CMAKE_OPTIONS="$ARROW_CMAKE_OPTIONS -DARROW_CUDA=ON"
+  fi
+  cmake $ARROW_CMAKE_OPTIONS ..
 
   make -j$NPROC
   make install
+
+  git clone https://github.com/apache/parquet-testing.git
+  export PARQUET_TEST_DATA=$PWD/parquet-testing/data
 
   ctest -VV -L unittest
-  popd
-}
-
-# Build and install Parquet master so we can test the Python bindings
-
-install_parquet_cpp() {
-  git clone git@github.com:apache/parquet-cpp.git
-
-  mkdir parquet-cpp/build
-  pushd parquet-cpp/build
-
-  cmake -DCMAKE_INSTALL_PREFIX=$PARQUET_HOME \
-        -DCMAKE_INSTALL_LIBDIR=$PARQUET_HOME/lib \
-        -DCMAKE_BUILD_TYPE=release \
-        -DPARQUET_BOOST_USE_SHARED=on \
-        -DPARQUET_BUILD_TESTS=off \
-        ..
-
-  make -j$NPROC
-  make install
-
   popd
 }
 
@@ -156,7 +224,7 @@ install_parquet_cpp() {
 test_python() {
   pushd python
 
-  pip install -r requirements.txt
+  pip install -r requirements.txt -r requirements-test.txt
 
   python setup.py build_ext --inplace --with-parquet --with-plasma
   py.test pyarrow -v --pdb
@@ -172,9 +240,14 @@ test_glib() {
   make -j$NPROC
   make install
 
-  GI_TYPELIB_PATH=$ARROW_HOME/lib/girepository-1.0 \
-                 NO_MAKE=yes \
-                 test/run-test.sh
+  export GI_TYPELIB_PATH=$ARROW_HOME/lib/girepository-1.0:$GI_TYPELIB_PATH
+
+  if ! bundle --version; then
+    gem install bundler
+  fi
+
+  bundle install --path vendor/bundle
+  bundle exec ruby test/run-test.rb
 
   popd
 }
@@ -194,6 +267,51 @@ test_js() {
 
   # run again to test all builds against the snapshots
   # npm test -- --integration
+  popd
+}
+
+test_ruby() {
+  pushd ruby
+
+  local modules="red-arrow red-plasma red-gandiva red-parquet"
+  if [ "${ARROW_HAVE_CUDA}" = "yes" ]; then
+    modules="${modules} red-arrow-cuda"
+  fi
+
+  for module in ${modules}; do
+    pushd ${module}
+    bundle install --path vendor/bundle
+    bundle exec ruby test/run-test.rb
+    popd
+  done
+
+  popd
+}
+
+test_rust() {
+  # install rust toolchain in a similar fashion like test-miniconda
+  export RUSTUP_HOME=`pwd`/test-rustup
+  export CARGO_HOME=`pwd`/test-rustup
+
+  curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path
+
+  export PATH=$RUSTUP_HOME/bin:$PATH
+  source $RUSTUP_HOME/env
+
+  # build and test rust
+  pushd rust
+
+  # we are targeting Rust nightly for releases
+  rustup default nightly
+
+  # raises on any formatting errors
+  rustup component add rustfmt-preview
+  cargo fmt --all -- --check
+  # raises on any warnings
+
+  RUSTFLAGS="-D warnings" cargo build
+  cargo test
+
   popd
 }
 
@@ -237,26 +355,67 @@ if [ "$(uname)" == "Darwin" ]; then
 else
   NPROC=$(nproc)
 fi
-VERSION=$1
-RC_NUMBER=$2
-
-TARBALL=apache-arrow-$1.tar.gz
 
 import_gpg_keys
 
-DIST_NAME="apache-arrow-${VERSION}"
-fetch_archive $DIST_NAME
-tar xvzf ${DIST_NAME}.tar.gz
-cd ${DIST_NAME}
+if [ "$ARTIFACT" == "source" ]; then
+  TARBALL=apache-arrow-$1.tar.gz
+  DIST_NAME="apache-arrow-${VERSION}"
 
-test_package_java
-setup_miniconda
-test_and_install_cpp
-test_js
-test_integration
-test_glib
-install_parquet_cpp
-test_python
+  # By default test all functionalities.
+  # To deactivate one test, deactivate the test and all of its dependents
+  # To explicitly select one test, set TEST_DEFAULT=0 TEST_X=1
+  : ${TEST_DEFAULT:=1}
+  : ${TEST_JAVA:=${TEST_DEFAULT}}
+  : ${TEST_CPP:=${TEST_DEFAULT}}
+  : ${TEST_GLIB:=${TEST_DEFAULT}}
+  : ${TEST_RUBY:=${TEST_DEFAULT}}
+  : ${TEST_PYTHON:=${TEST_DEFAULT}}
+  : ${TEST_JS:=${TEST_DEFAULT}}
+  : ${TEST_INTEGRATION:=${TEST_DEFAULT}}
+  : ${TEST_RUST:=${TEST_DEFAULT}}
+
+  # Automatically test if its activated by a dependent
+  TEST_GLIB=$((${TEST_GLIB} + ${TEST_RUBY}))
+  TEST_PYTHON=$((${TEST_PYTHON} + ${TEST_INTEGRATION}))
+  TEST_CPP=$((${TEST_CPP} + ${TEST_GLIB} + ${TEST_PYTHON}))
+  TEST_JAVA=$((${TEST_JAVA} + ${TEST_INTEGRATION}))
+  TEST_JS=$((${TEST_JS} + ${TEST_INTEGRATION}))
+
+  fetch_archive $DIST_NAME
+  tar xvzf ${DIST_NAME}.tar.gz
+  cd ${DIST_NAME}
+
+  if [ ${TEST_JAVA} -gt 0 ]; then
+    test_package_java
+  fi
+  if [ ${TEST_CPP} -gt 0 ]; then
+    setup_miniconda
+    test_and_install_cpp
+  fi
+  if [ ${TEST_PYTHON} -gt 0 ]; then
+    test_python
+  fi
+  if [ ${TEST_GLIB} -gt 0 ]; then
+    test_glib
+  fi
+  if [ ${TEST_RUBY} -gt 0 ]; then
+    test_ruby
+  fi
+  if [ ${TEST_JS} -gt 0 ]; then
+    test_js
+  fi
+  if [ ${TEST_INTEGRATION} -gt 0 ]; then
+    test_integration
+  fi
+  if [ ${TEST_RUST} -gt 0 ]; then
+    test_rust
+  fi
+else
+  : ${BINTRAY_REPOSITORY:=apache/arrow}
+
+  verify_binary_artifacts
+fi
 
 echo 'Release candidate looks good!'
 exit 0

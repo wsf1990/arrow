@@ -15,34 +15,41 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { TypedArray } from '../type';
-
-export function align(value: number, alignment: number) {
-    return value + padding(value, alignment);
-}
-
-export function padding(value: number, alignment: number) {
-    return (value % alignment === 0 ? 0 : alignment - value % alignment);
-}
-
+/** @ignore */
 export function getBool(_data: any, _index: number, byte: number, bit: number) {
     return (byte & 1 << bit) !== 0;
 }
 
+/** @ignore */
 export function getBit(_data: any, _index: number, byte: number, bit: number): 0 | 1 {
     return (byte & 1 << bit) >> bit as (0 | 1);
 }
 
+/** @ignore */
 export function setBool(bytes: Uint8Array, index: number, value: any) {
     return value ?
         !!(bytes[index >> 3] |=  (1 << (index % 8))) || true :
         !(bytes[index >> 3] &= ~(1 << (index % 8))) && false ;
 }
 
+/** @ignore */
+export function truncateBitmap(offset: number, length: number, bitmap: Uint8Array) {
+    const alignedSize = (bitmap.byteLength + 7) & ~7;
+    if (offset > 0 || bitmap.byteLength < alignedSize) {
+        const bytes = new Uint8Array(alignedSize);
+        // If the offset is a multiple of 8 bits, it's safe to slice the bitmap
+        bytes.set(offset % 8 === 0 ? bitmap.subarray(offset >> 3) :
+            // Otherwise iterate each bit from the offset and return a new one
+            packBools(iterateBits(bitmap, offset, length, null, getBool)).subarray(0, alignedSize));
+        return bytes;
+    }
+    return bitmap;
+}
+
+/** @ignore */
 export function packBools(values: Iterable<any>) {
-    let n = 0, i = 0;
     let xs: number[] = [];
-    let bit = 0, byte = 0;
+    let i = 0, bit = 0, byte = 0;
     for (const value of values) {
         value && (byte |= 1 << bit);
         if (++bit === 8) {
@@ -51,12 +58,12 @@ export function packBools(values: Iterable<any>) {
         }
     }
     if (i === 0 || bit > 0) { xs[i++] = byte; }
-    if (i % 8 && (n = i + 8 - i % 8)) {
-        do { xs[i] = 0; } while (++i < n);
-    }
-    return new Uint8Array(xs);
+    let b = new Uint8Array((xs.length + 7) & ~7);
+    b.set(xs);
+    return b;
 }
 
+/** @ignore */
 export function* iterateBits<T>(bytes: Uint8Array, begin: number, length: number, context: any,
                                 get: (context: any, index: number, byte: number, bit: number) => T) {
     let bit = begin % 8;
@@ -76,6 +83,7 @@ export function* iterateBits<T>(bytes: Uint8Array, begin: number, length: number
  * @param lhs The range's left-hand side (or start) bit
  * @param rhs The range's right-hand side (or end) bit
  */
+/** @ignore */
 export function popcnt_bit_range(data: Uint8Array, lhs: number, rhs: number): number {
     if (rhs - lhs <= 0) { return 0; }
     // If the bit range is less than one byte, sum the 1 bits in the bit range
@@ -100,7 +108,8 @@ export function popcnt_bit_range(data: Uint8Array, lhs: number, rhs: number): nu
     );
 }
 
-export function popcnt_array(arr: TypedArray, byteOffset?: number, byteLength?: number) {
+/** @ignore */
+export function popcnt_array(arr: ArrayBufferView, byteOffset?: number, byteLength?: number) {
     let cnt = 0, pos = byteOffset! | 0;
     const view = new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
     const len =  byteLength === void 0 ? arr.byteLength : pos + byteLength;
@@ -119,6 +128,7 @@ export function popcnt_array(arr: TypedArray, byteOffset?: number, byteLength?: 
     return cnt;
 }
 
+/** @ignore */
 export function popcnt_uint32(uint32: number): number {
     let i = uint32 | 0;
     i = i - ((i >>> 1) & 0x55555555);

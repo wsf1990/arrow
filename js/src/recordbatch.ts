@@ -15,56 +15,87 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Schema, Struct, DataType } from './type';
-import { flatbuffers } from 'flatbuffers';
-import { View, Vector, StructVector } from './vector';
-import { Data, NestedData } from './data';
+import { Data } from './data';
+import { Table } from './table';
+import { Vector } from './vector';
+import { Schema, Field } from './schema';
+import { DataType, Struct } from './type';
+import { Chunked } from './vector/chunked';
+import { StructVector } from './vector/struct';
+import { selectFieldArgs } from './util/args';
+import { ensureSameLengthData } from './util/recordbatch';
+import { Clonable, Sliceable, Applicative } from './vector';
 
-import Long = flatbuffers.Long;
+type VectorMap = { [key: string]: Vector };
+type Fields<T extends { [key: string]: DataType }> = (keyof T)[] | Field<T[keyof T]>[];
+type ChildData<T extends { [key: string]: DataType }> = (Data<T[keyof T]> | Vector<T[keyof T]>)[];
 
-export class RecordBatch extends StructVector {
-    public static from(vectors: Vector[]) {
-        return new RecordBatch(Schema.from(vectors),
-            Math.max(...vectors.map((v) => v.length)),
-            vectors
-        );
+export interface RecordBatch<T extends { [key: string]: DataType } = any> {
+    concat(...others: Vector<Struct<T>>[]): Table<T>;
+    slice(begin?: number, end?: number): RecordBatch<T>;
+    clone(data: Data<Struct<T>>, children?: Vector[]): RecordBatch<T>;
+}
+
+export class RecordBatch<T extends { [key: string]: DataType } = any>
+    extends StructVector<T>
+    implements Clonable<RecordBatch<T>>,
+               Sliceable<RecordBatch<T>>,
+               Applicative<Struct<T>, Table<T>> {
+
+    public static from<T extends VectorMap = any>(children: T): RecordBatch<{ [P in keyof T]: T[P]['type'] }>;
+    public static from<T extends { [key: string]: DataType } = any>(children: ChildData<T>, fields?: Fields<T>): RecordBatch<T>;
+    /** @nocollapse */
+    public static from(...args: any[]) {
+        return RecordBatch.new(args[0], args[1]);
     }
-    public readonly schema: Schema;
-    public readonly length: number;
-    public readonly numCols: number;
-    constructor(schema: Schema, data: Data<Struct>, view: View<Struct>);
-    constructor(schema: Schema, numRows: Long | number, cols: Data<any> | Vector[]);
+
+    public static new<T extends VectorMap = any>(children: T): RecordBatch<{ [P in keyof T]: T[P]['type'] }>;
+    public static new<T extends { [key: string]: DataType } = any>(children: ChildData<T>, fields?: Fields<T>): RecordBatch<T>;
+    /** @nocollapse */
+    public static new<T extends { [key: string]: DataType } = any>(...args: any[]) {
+        const [fs, xs] = selectFieldArgs<T>(args);
+        const vs = xs.filter((x): x is Vector<T[keyof T]> => x instanceof Vector);
+        return new RecordBatch(...ensureSameLengthData(new Schema<T>(fs), vs.map((x) => x.data)));
+    }
+
+    protected _schema: Schema;
+
+    constructor(schema: Schema<T>, length: number, children: (Data | Vector)[]);
+    constructor(schema: Schema<T>, data: Data<Struct<T>>, children?: Vector[]);
     constructor(...args: any[]) {
-        if (typeof args[1] !== 'number') {
-            const data = args[1] as Data<Struct>;
-            super(data, args[2]);
-            this.schema = args[0];
-            this.length = data.length;
+        let data: Data<Struct<T>>;
+        let schema = args[0] as Schema<T>;
+        let children: Vector[] | undefined;
+        if (args[1] instanceof Data) {
+            [, data, children] = (args as [any, Data<Struct<T>>, Vector<T[keyof T]>[]?]);
         } else {
-            const [schema, numRows, cols] = args;
-            const childData: Data<any>[] = new Array(cols.length);
-            for (let index = -1, length = cols.length; ++index < length;) {
-                const col: Data<any> | Vector = cols[index];
-                childData[index] = col instanceof Vector ? col.data : col;
-            }
-            super(new NestedData(new Struct(schema.fields), numRows, null, childData));
-            this.schema = schema;
-            this.length = numRows;
+            const fields = schema.fields as Field<T[keyof T]>[];
+            const [, length, childData] = args as [any, number, Data<T[keyof T]>[]];
+            data = Data.Struct(new Struct<T>(fields), 0, length, 0, null, childData);
         }
-        this.numCols = this.schema.fields.length;
+        super(data, children);
+        this._schema = schema;
     }
-    public clone<R extends Struct>(data: Data<R>, view: View<R> = this.view.clone(data)): this {
-        return new RecordBatch(this.schema, data as any, view) as any;
+
+    public clone(data: Data<Struct<T>>, children = this._children) {
+        return new RecordBatch<T>(this._schema, data, children);
     }
-    public getChildAt<R extends DataType = DataType>(index: number): Vector<R> | null {
-        return index < 0 || index >= this.numCols ? null : super.getChildAt<R>(index);
+
+    public concat(...others: Vector<Struct<T>>[]): Table<T> {
+        const schema = this._schema, chunks = Chunked.flatten(this, ...others);
+        return new Table(schema, chunks.map(({ data }) => new RecordBatch(schema, data)));
     }
-    public select(...columnNames: string[]) {
-        const fields = this.schema.fields;
-        const namesToKeep = columnNames.reduce((xs, x) => (xs[x] = true) && xs, Object.create(null));
-        return new RecordBatch(
-            this.schema.select(...columnNames), this.length,
-            this.childData.filter((_, i) => namesToKeep[fields[i].name])
-        );
+
+    public get schema() { return this._schema; }
+    public get numCols() { return this._schema.fields.length; }
+
+    public select<K extends keyof T = any>(...columnNames: K[]) {
+        const nameToIndex = this._schema.fields.reduce((m, f, i) => m.set(f.name as K, i), new Map<K, number>());
+        return this.selectAt(...columnNames.map((columnName) => nameToIndex.get(columnName)!).filter((x) => x > -1));
+    }
+    public selectAt<K extends T[keyof T] = any>(...columnIndices: number[]) {
+        const schema = this._schema.selectAt(...columnIndices);
+        const childData = columnIndices.map((i) => this.data.childData[i]).filter(Boolean);
+        return new RecordBatch<{ [key: string]: K }>(schema, this.length, childData);
     }
 }

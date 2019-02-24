@@ -1,14 +1,13 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- * <p>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,18 +17,20 @@
 
 package org.apache.arrow.vector;
 
-import io.netty.buffer.ArrowBuf;
+import java.math.BigDecimal;
+
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.complex.impl.DecimalReaderImpl;
 import org.apache.arrow.vector.complex.reader.FieldReader;
 import org.apache.arrow.vector.holders.DecimalHolder;
 import org.apache.arrow.vector.holders.NullableDecimalHolder;
 import org.apache.arrow.vector.types.Types.MinorType;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.util.DecimalUtility;
 import org.apache.arrow.vector.util.TransferPair;
 
-import java.math.BigDecimal;
+import io.netty.buffer.ArrowBuf;
 
 /**
  * DecimalVector implements a fixed width vector (16 bytes) of
@@ -46,32 +47,35 @@ public class DecimalVector extends BaseFixedWidthVector {
   /**
    * Instantiate a DecimalVector. This doesn't allocate any memory for
    * the data in vector.
+   *
    * @param name name of the vector
    * @param allocator allocator for memory management.
    */
   public DecimalVector(String name, BufferAllocator allocator,
                                int precision, int scale) {
-    this(name, FieldType.nullable(new org.apache.arrow.vector.types.pojo.ArrowType.Decimal(precision, scale)),
-            allocator);
+    this(name, FieldType.nullable(
+      new ArrowType.Decimal(precision, scale)), allocator);
   }
 
   /**
    * Instantiate a DecimalVector. This doesn't allocate any memory for
    * the data in vector.
+   *
    * @param name name of the vector
    * @param fieldType type of Field materialized by this vector
    * @param allocator allocator for memory management.
    */
   public DecimalVector(String name, FieldType fieldType, BufferAllocator allocator) {
     super(name, allocator, fieldType, TYPE_WIDTH);
-    org.apache.arrow.vector.types.pojo.ArrowType.Decimal arrowType = (org.apache.arrow.vector.types.pojo.ArrowType.Decimal) fieldType.getType();
+    ArrowType.Decimal arrowType = (ArrowType.Decimal) fieldType.getType();
     reader = new DecimalReaderImpl(DecimalVector.this);
     this.precision = arrowType.getPrecision();
     this.scale = arrowType.getScale();
   }
 
   /**
-   * Get a reader that supports reading values from this vector
+   * Get a reader that supports reading values from this vector.
+   *
    * @return Field Reader for this vector
    */
   @Override
@@ -82,6 +86,7 @@ public class DecimalVector extends BaseFixedWidthVector {
   /**
    * Get minor type for this vector. The vector holds values belonging
    * to a particular type.
+   *
    * @return {@link org.apache.arrow.vector.types.Types.MinorType}
    */
   @Override
@@ -90,11 +95,11 @@ public class DecimalVector extends BaseFixedWidthVector {
   }
 
 
-  /******************************************************************
-   *                                                                *
-   *          vector value retrieval methods                        *
-   *                                                                *
-   ******************************************************************/
+  /*----------------------------------------------------------------*
+   |                                                                |
+   |          vector value retrieval methods                        |
+   |                                                                |
+   *----------------------------------------------------------------*/
 
 
   /**
@@ -145,7 +150,8 @@ public class DecimalVector extends BaseFixedWidthVector {
 
   /**
    * Copy a cell value from a particular index in source vector to a particular
-   * position in this vector
+   * position in this vector.
+   *
    * @param fromIndex position to copy from in source vector
    * @param thisIndex position to copy to in this vector
    * @param from source vector
@@ -160,6 +166,7 @@ public class DecimalVector extends BaseFixedWidthVector {
    * Same as {@link #copyFrom(int, int, DecimalVector)} except that
    * it handles the case when the capacity of the vector needs to be expanded
    * before copy.
+   *
    * @param fromIndex position to copy from in source vector
    * @param thisIndex position to copy to in this vector
    * @param from source vector
@@ -170,18 +177,18 @@ public class DecimalVector extends BaseFixedWidthVector {
   }
 
   /**
-   * Return scale for the decimal value
+   * Return scale for the decimal value.
    */
   public int getScale() {
     return scale;
   }
 
 
-  /******************************************************************
-   *                                                                *
-   *          vector value setter methods                           *
-   *                                                                *
-   ******************************************************************/
+  /*----------------------------------------------------------------*
+   |                                                                |
+   |          vector value setter methods                           |
+   |                                                                |
+   *----------------------------------------------------------------*/
 
 
   /**
@@ -200,11 +207,11 @@ public class DecimalVector extends BaseFixedWidthVector {
    * Decimal is now implemented as Little Endian. This API allows the user
    * to pass a decimal value in the form of byte array in BE byte order.
    *
-   * Consumers of Arrow code can use this API instead of first swapping
+   * <p>Consumers of Arrow code can use this API instead of first swapping
    * the source bytes (doing a write and read) and then finally writing to
    * ArrowBuf of decimal vector.
    *
-   * This method takes care of adding the necessary padding if the length
+   * <p>This method takes care of adding the necessary padding if the length
    * of byte array is less then 16 (length of decimal type).
    *
    * @param index position of element
@@ -215,11 +222,11 @@ public class DecimalVector extends BaseFixedWidthVector {
     final int length = value.length;
     int startIndex = index * TYPE_WIDTH;
     if (length == TYPE_WIDTH) {
-      for (int i = TYPE_WIDTH - 1; i >= 3; i-=4) {
+      for (int i = TYPE_WIDTH - 1; i >= 3; i -= 4) {
         valueBuffer.setByte(startIndex, value[i]);
-        valueBuffer.setByte(startIndex + 1, value[i-1]);
-        valueBuffer.setByte(startIndex + 2, value[i-2]);
-        valueBuffer.setByte(startIndex + 3, value[i-3]);
+        valueBuffer.setByte(startIndex + 1, value[i - 1]);
+        valueBuffer.setByte(startIndex + 2, value[i - 2]);
+        valueBuffer.setByte(startIndex + 3, value[i - 3]);
         startIndex += 4;
       }
 
@@ -387,15 +394,15 @@ public class DecimalVector extends BaseFixedWidthVector {
    */
   public void setNull(int index) {
     handleSafe(index);
-      /* not really needed to set the bit to 0 as long as
-       * the buffer always starts from 0.
-       */
+    // not really needed to set the bit to 0 as long as
+    // the buffer always starts from 0.
     BitVectorHelper.setValidityBit(validityBuffer, index, 0);
   }
 
   /**
    * Store the given value at a particular position in the vector. isSet indicates
    * whether the value is NULL or not.
+   *
    * @param index position of the new value
    * @param isSet 0 for NULL value, 1 otherwise
    * @param start start position of the value in the buffer
@@ -413,6 +420,7 @@ public class DecimalVector extends BaseFixedWidthVector {
    * Same as {@link #setSafe(int, int, int, ArrowBuf)} except that it handles
    * the case when the position of new value is beyond the current value
    * capacity of the vector.
+   *
    * @param index position of the new value
    * @param isSet 0 for NULL value, 1 otherwise
    * @param start start position of the value in the buffer
@@ -424,16 +432,17 @@ public class DecimalVector extends BaseFixedWidthVector {
   }
 
 
-  /******************************************************************
-   *                                                                *
-   *                      vector transfer                           *
-   *                                                                *
-   ******************************************************************/
+  /*----------------------------------------------------------------*
+   |                                                                |
+   |                      vector transfer                           |
+   |                                                                |
+   *----------------------------------------------------------------*/
 
 
   /**
    * Construct a TransferPair comprising of this and and a target vector of
    * the same type.
+   *
    * @param ref name of the target vector
    * @param allocator allocator for the target vector
    * @return {@link TransferPair}
@@ -445,6 +454,7 @@ public class DecimalVector extends BaseFixedWidthVector {
 
   /**
    * Construct a TransferPair with a desired target vector of the same type.
+   *
    * @param to target vector
    * @return {@link TransferPair}
    */

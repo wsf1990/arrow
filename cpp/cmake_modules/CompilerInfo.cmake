@@ -21,19 +21,26 @@ if (NOT MSVC)
   set(COMPILER_GET_VERSION_SWITCH "-v")
 endif()
 
-message(INFO "Compiler command: ${CMAKE_CXX_COMPILER}")
+set(COMPILER_VERSION_COMMAND "${CMAKE_CXX_COMPILER}" "${COMPILER_GET_VERSION_SWITCH}")
+
+if (UNIX OR APPLE)
+  set(COMPILER_VERSION_COMMAND "env" "LANG=C" ${COMPILER_VERSION_COMMAND})
+endif()
+
+string(REPLACE ";" " " COMPILER_VERSION_COMMAND_STR "${COMPILER_VERSION_COMMAND}")
+message(STATUS "Compiler command: ${COMPILER_VERSION_COMMAND_STR}")
 # Some gcc seem to output their version on stdout, most do it on stderr, simply
 # merge both pipes into a single variable
-execute_process(COMMAND "${CMAKE_CXX_COMPILER}" ${COMPILER_GET_VERSION_SWITCH}
+execute_process(COMMAND ${COMPILER_VERSION_COMMAND}
                 OUTPUT_VARIABLE COMPILER_VERSION_FULL
                 ERROR_VARIABLE COMPILER_VERSION_FULL)
-message(INFO "Compiler version: ${COMPILER_VERSION_FULL}")
-message(INFO "Compiler id: ${CMAKE_CXX_COMPILER_ID}")
+message(STATUS "Compiler version: ${COMPILER_VERSION_FULL}")
+message(STATUS "Compiler id: ${CMAKE_CXX_COMPILER_ID}")
 string(TOLOWER "${COMPILER_VERSION_FULL}" COMPILER_VERSION_FULL_LOWER)
 
 if(MSVC)
   set(COMPILER_FAMILY "msvc")
-  if ("${COMPILER_VERSION_FULL}" MATCHES ".*Microsoft \\(R\\) C/C\\+\\+ Optimizing Compiler Version 19.*x64")
+  if ("${COMPILER_VERSION_FULL}" MATCHES ".*Microsoft ?\\(R\\) C/C\\+\\+ Optimizing Compiler Version 19.*x64")
     string(REGEX REPLACE ".*Optimizing Compiler Version ([0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+).*" "\\1"
       COMPILER_VERSION "${COMPILER_VERSION_FULL}")
   elseif(NOT "${COMPILER_VERSION_FULL}" STREQUAL "")
@@ -77,6 +84,11 @@ elseif("${COMPILER_VERSION_FULL}" MATCHES ".*clang-8")
 elseif("${COMPILER_VERSION_FULL}" MATCHES ".*clang-9")
   set(COMPILER_FAMILY "clang")
   set(COMPILER_VERSION "4.0.0svn")
+
+# clang on Mac OS X, XCode 9.
+elseif("${COMPILER_VERSION_FULL}" MATCHES ".*clang-10")
+  set(COMPILER_FAMILY "clang")
+  set(COMPILER_VERSION "4.1.0svn")
 
 # gcc
 elseif("${COMPILER_VERSION_FULL_LOWER}" MATCHES ".*gcc[ -]version.*")
